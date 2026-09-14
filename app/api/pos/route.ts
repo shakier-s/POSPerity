@@ -9,7 +9,28 @@ export async function GET(request: Request) {
     const db = getDb();
     await seedIfEmpty(db);
     const url = new URL(request.url),
-      clientId = Number(url.searchParams.get('clientId') || 1);
+      clientId = Number(url.searchParams.get('clientId') || 1),
+      actingUserId = Number(url.searchParams.get('userId') || 0);
+    const actor = actingUserId
+      ? await db
+          .prepare<{
+            id: number;
+            client_id: number;
+            default_location_id: number;
+            role: string;
+            status: string;
+          }>('SELECT id,client_id,default_location_id,role,status FROM users WHERE id=?')
+          .bind(actingUserId)
+          .first()
+      : null;
+    if (actingUserId && (!actor || actor.status !== 'Active'))
+      return bad('An active user session is required', 401);
+    if (actor && actor.client_id !== clientId)
+      return bad('This user does not belong to the selected client', 403);
+    const role = actor?.role.toLowerCase() || 'administrator',
+      isAdministrator = role.includes('administrator'),
+      isManager = role.includes('manager'),
+      scopedLocationId = actor?.default_location_id || 0;
     const [
       clients,
       locations,
@@ -20,16 +41,28 @@ export async function GET(request: Request) {
       transfers,
       sales,
     ] = await Promise.all([
-      db.prepare('SELECT * FROM clients ORDER BY id').all(),
+      isAdministrator
+        ? db.prepare('SELECT * FROM clients ORDER BY id').all()
+        : db.prepare('SELECT * FROM clients WHERE id=?').bind(clientId).all(),
       db
-        .prepare('SELECT * FROM locations WHERE client_id=? ORDER BY type,name')
-        .bind(clientId)
+        .prepare(
+          isAdministrator
+            ? 'SELECT * FROM locations WHERE client_id=? ORDER BY type,name'
+            : isManager
+              ? "SELECT * FROM locations WHERE client_id=? AND (id=? OR type='warehouse') ORDER BY type,name"
+              : 'SELECT * FROM locations WHERE client_id=? AND id=? ORDER BY name',
+        )
+        .bind(...(isAdministrator ? [clientId] : [clientId, scopedLocationId]))
         .all(),
       db
         .prepare(
-          'SELECT p.*,i.quantity AS stock,i.location_id FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? ORDER BY p.name',
+          isAdministrator
+            ? 'SELECT p.*,i.quantity AS stock,i.location_id FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? ORDER BY p.name'
+            : isManager
+              ? "SELECT p.*,i.quantity AS stock,i.location_id FROM products p JOIN inventory i ON i.product_id=p.id JOIN locations l ON l.id=i.location_id WHERE p.client_id=? AND (i.location_id=? OR l.type='warehouse') ORDER BY p.name"
+              : 'SELECT p.*,i.quantity AS stock,i.location_id FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? AND i.location_id=? ORDER BY p.name',
         )
-        .bind(clientId)
+        .bind(...(isAdministrator ? [clientId] : [clientId, scopedLocationId]))
         .all(),
       db
         .prepare(
@@ -38,26 +71,42 @@ export async function GET(request: Request) {
         .bind(clientId)
         .all(),
       db
-        .prepare('SELECT * FROM users WHERE client_id=? ORDER BY name')
-        .bind(clientId)
+        .prepare(
+          isAdministrator
+            ? 'SELECT * FROM users WHERE client_id=? ORDER BY name'
+            : isManager
+              ? 'SELECT * FROM users WHERE client_id=? AND default_location_id=? ORDER BY name'
+              : 'SELECT * FROM users WHERE client_id=? AND id=?',
+        )
+        .bind(...(isAdministrator ? [clientId] : isManager ? [clientId, scopedLocationId] : [clientId, actingUserId]))
         .all(),
       db
         .prepare(
-          'SELECT po.*,l.name AS destination FROM purchase_orders po JOIN locations l ON l.id=po.destination_location_id WHERE po.client_id=? ORDER BY po.id DESC',
+          isAdministrator
+            ? 'SELECT po.*,l.name AS destination FROM purchase_orders po JOIN locations l ON l.id=po.destination_location_id WHERE po.client_id=? ORDER BY po.id DESC'
+            : isManager
+              ? 'SELECT po.*,l.name AS destination FROM purchase_orders po JOIN locations l ON l.id=po.destination_location_id WHERE po.client_id=? AND po.destination_location_id=? ORDER BY po.id DESC'
+              : 'SELECT po.*,l.name AS destination FROM purchase_orders po JOIN locations l ON l.id=po.destination_location_id WHERE po.client_id=? AND 0',
         )
-        .bind(clientId)
+        .bind(...(isManager ? [clientId, scopedLocationId] : [clientId]))
         .all(),
       db
         .prepare(
-          'SELECT t.*,f.name AS origin,d.name AS destination,p.name AS product_name FROM stock_transfers t JOIN locations f ON f.id=t.from_location_id JOIN locations d ON d.id=t.to_location_id JOIN products p ON p.id=t.product_id WHERE t.client_id=? ORDER BY t.id DESC',
+          isAdministrator
+            ? 'SELECT t.*,f.name AS origin,d.name AS destination,p.name AS product_name FROM stock_transfers t JOIN locations f ON f.id=t.from_location_id JOIN locations d ON d.id=t.to_location_id JOIN products p ON p.id=t.product_id WHERE t.client_id=? ORDER BY t.id DESC'
+            : isManager
+              ? 'SELECT t.*,f.name AS origin,d.name AS destination,p.name AS product_name FROM stock_transfers t JOIN locations f ON f.id=t.from_location_id JOIN locations d ON d.id=t.to_location_id JOIN products p ON p.id=t.product_id WHERE t.client_id=? AND (t.from_location_id=? OR t.to_location_id=?) ORDER BY t.id DESC'
+              : 'SELECT t.*,f.name AS origin,d.name AS destination,p.name AS product_name FROM stock_transfers t JOIN locations f ON f.id=t.from_location_id JOIN locations d ON d.id=t.to_location_id JOIN products p ON p.id=t.product_id WHERE t.client_id=? AND 0',
         )
-        .bind(clientId)
+        .bind(...(isManager ? [clientId, scopedLocationId, scopedLocationId] : [clientId]))
         .all(),
       db
         .prepare(
-          'SELECT s.*,l.name AS location_name,u.name AS cashier_name,c.name AS customer_name FROM sales s JOIN locations l ON l.id=s.location_id JOIN users u ON u.id=s.user_id LEFT JOIN customers c ON c.id=s.customer_id WHERE s.client_id=? ORDER BY s.id DESC LIMIT 50',
+          isAdministrator
+            ? 'SELECT s.*,l.name AS location_name,u.name AS cashier_name,c.name AS customer_name FROM sales s JOIN locations l ON l.id=s.location_id JOIN users u ON u.id=s.user_id LEFT JOIN customers c ON c.id=s.customer_id WHERE s.client_id=? ORDER BY s.id DESC LIMIT 50'
+            : 'SELECT s.*,l.name AS location_name,u.name AS cashier_name,c.name AS customer_name FROM sales s JOIN locations l ON l.id=s.location_id JOIN users u ON u.id=s.user_id LEFT JOIN customers c ON c.id=s.customer_id WHERE s.client_id=? AND s.location_id=? ORDER BY s.id DESC LIMIT 50',
         )
-        .bind(clientId)
+        .bind(...(isAdministrator ? [clientId] : [clientId, scopedLocationId]))
         .all(),
     ]);
     return json({
@@ -112,6 +161,7 @@ export async function POST(request: Request) {
       'purchaseOrder',
       'transfer',
       'receiveTransfer',
+      'user',
     ]);
     if (
       !isAdministrator &&
@@ -144,6 +194,16 @@ export async function POST(request: Request) {
         email = String(body.email || '').trim();
       if (!clientId || !locationId || !name || !email)
         return bad('Name, email and default store are required');
+      const requestedRole = String(body.role || 'Cashier');
+      if (
+        isManager &&
+        (requestedRole.toLowerCase() !== 'cashier' ||
+          locationId !== actor.default_location_id)
+      )
+        return bad(
+          'Store managers may only create cashiers for their assigned store',
+          403,
+        );
       const result = await db
         .prepare(
           'INSERT INTO users (client_id,default_location_id,name,email,role,status) VALUES (?,?,?,?,?,?)',
@@ -153,7 +213,7 @@ export async function POST(request: Request) {
           locationId,
           name,
           email,
-          String(body.role || 'Cashier'),
+          requestedRole,
           'Active',
         )
         .run();
@@ -166,6 +226,8 @@ export async function POST(request: Request) {
         total = Number(body.total);
       if (!clientId || !locationId || !supplier || total < 0)
         return bad('Supplier, destination and valid total are required');
+      if (isManager && locationId !== actor.default_location_id)
+        return bad('Store managers may only order for their assigned store', 403);
       const result = await db
         .prepare(
           'INSERT INTO purchase_orders (client_id,destination_location_id,supplier,status,total,created_at) VALUES (?,?,?,?,?,?)',
@@ -190,6 +252,11 @@ export async function POST(request: Request) {
       )
         return bad(
           'Valid origin, destination, product and quantity are required',
+        );
+      if (isManager && to !== actor.default_location_id)
+        return bad(
+          'Store managers may only request transfers to their assigned store',
+          403,
         );
       const source = await db
         .prepare<{ quantity: number }>(
@@ -223,6 +290,11 @@ export async function POST(request: Request) {
         .first();
       if (!transfer || transfer.status === 'Received')
         return bad('Transfer is unavailable or already received');
+      if (isManager && transfer.to_location_id !== actor.default_location_id)
+        return bad(
+          'Store managers may only receive transfers for their assigned store',
+          403,
+        );
       await db.batch([
         db
           .prepare(

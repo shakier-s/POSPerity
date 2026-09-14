@@ -136,8 +136,11 @@ export default function Home() {
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState('');
   const load = useCallback(
-    async (id = clientId) => {
-      const r = await fetch(`/api/pos?clientId=${id}`, { cache: 'no-store' }),
+    async (id = clientId, actingUserId = 0) => {
+      const r = await fetch(
+          `/api/pos?clientId=${id}${actingUserId ? `&userId=${actingUserId}` : ''}`,
+          { cache: 'no-store' },
+        ),
         body = await r.json();
       if (!r.ok) throw new Error(body.error || 'Could not load data');
       setData(body);
@@ -189,10 +192,13 @@ export default function Home() {
     site = stores.find((s) => s.id === siteId),
     user = data?.users.find((u) => u.id === userId),
     isAdministrator = user?.role.toLowerCase().includes('administrator') ?? false,
+    isManager = user?.role.toLowerCase().includes('manager') ?? false,
     isCashier = user?.role.toLowerCase() === 'cashier',
     visibleNav = isCashier
       ? navItems.filter(([label]) => label === 'Sell' || label === 'Customers')
-      : navItems,
+      : isManager
+        ? navItems.filter(([label]) => label !== 'Sites')
+        : navItems,
     siteProducts = (data?.products || []).filter(
       (p) => p.location_id === siteId,
     ),
@@ -247,7 +253,9 @@ export default function Home() {
           setSiteId(selected.default_location_id);
           setActiveNav('Sell');
         }}
-        onEnter={() => setEntryStage('app')}
+        onEnter={() => {
+          void load(clientId, userId).then(() => setEntryStage('app'));
+        }}
       />
     );
   return (
@@ -377,11 +385,11 @@ export default function Home() {
             </div>
           </div>
           <div className="top-actions">
-            <label className={`site-select ${isCashier ? 'site-locked' : ''}`}>
+            <label className={`site-select ${!isAdministrator ? 'site-locked' : ''}`}>
               <MapPin />
               <select
                 value={siteId}
-                disabled={isCashier}
+                disabled={!isAdministrator}
                 onChange={(e) => {
                   setSiteId(Number(e.target.value));
                   setCart([]);
@@ -421,7 +429,7 @@ export default function Home() {
                 <div>
                   <strong>{client?.name}</strong>
                   <small>
-                      {isCashier ? 'Cashier access' : 'Administrator access'} · Selling from {site?.name} · Completed sales post live
+                      {isCashier ? 'Cashier access' : isManager ? 'Store manager access' : 'Administrator access'} · Selling from {site?.name} · Completed sales post live
                   </small>
                 </div>
               </div>
@@ -1026,6 +1034,8 @@ function Dialog({
   customerId?: number;
 }) {
   const stores = locations.filter((l) => l.type === 'store'),
+    actor = data.users.find((candidate) => candidate.id === userId),
+    managerCreatingUser = actor?.role.toLowerCase().includes('manager'),
     warehouseProducts = data.products.filter(
       (p) => p.location_id === warehouse?.id,
     );
@@ -1142,8 +1152,8 @@ function Dialog({
           Role
           <select name="role">
             <option>Cashier</option>
-            <option>Store manager</option>
-            <option>Client administrator</option>
+            {!managerCreatingUser && <option>Store manager</option>}
+            {!managerCreatingUser && <option>Client administrator</option>}
           </select>
         </label>
         <label>
