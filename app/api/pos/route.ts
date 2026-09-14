@@ -85,6 +85,39 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action || '');
     const now = new Date().toISOString();
+    const actingUserId = Number(body.userId);
+    const requestedClientId = Number(body.clientId);
+    const actor = await db
+      .prepare<{
+        id: number;
+        client_id: number;
+        default_location_id: number;
+        role: string;
+        status: string;
+      }>(
+        'SELECT id,client_id,default_location_id,role,status FROM users WHERE id=?',
+      )
+      .bind(actingUserId)
+      .first();
+    if (!actor || actor.status !== 'Active')
+      return bad('An active user session is required', 401);
+    if (requestedClientId && actor.client_id !== requestedClientId)
+      return bad('This user does not belong to the selected client', 403);
+    const normalizedRole = actor.role.toLowerCase();
+    const isAdministrator = normalizedRole.includes('administrator');
+    const isManager = normalizedRole.includes('manager');
+    const cashierActions = new Set(['sale', 'customer']);
+    const managerActions = new Set([
+      ...cashierActions,
+      'purchaseOrder',
+      'transfer',
+      'receiveTransfer',
+    ]);
+    if (
+      !isAdministrator &&
+      !(isManager ? managerActions : cashierActions).has(action)
+    )
+      return bad(`${actor.role} users cannot perform this action`, 403);
     if (action === 'customer') {
       const clientId = Number(body.clientId),
         name = String(body.name || '').trim();
@@ -229,6 +262,8 @@ export async function POST(request: Request) {
           : [];
       if (!clientId || !locationId || !userId || !items.length)
         return bad('Sale location, cashier and items are required');
+      if (!isAdministrator && !isManager && locationId !== actor.default_location_id)
+        return bad('Cashiers can only sell from their assigned default store', 403);
       const ids = items.map((i) => Number(i.productId));
       const { results: rows } = await db
         .prepare<{ id: number; price: number; stock: number }>(

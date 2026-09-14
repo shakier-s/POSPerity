@@ -188,6 +188,11 @@ export default function Home() {
     client = clients.find((c) => c.id === clientId),
     site = stores.find((s) => s.id === siteId),
     user = data?.users.find((u) => u.id === userId),
+    isAdministrator = user?.role.toLowerCase().includes('administrator') ?? false,
+    isCashier = user?.role.toLowerCase() === 'cashier',
+    visibleNav = isCashier
+      ? navItems.filter(([label]) => label === 'Sell' || label === 'Customers')
+      : navItems,
     siteProducts = (data?.products || []).filter(
       (p) => p.location_id === siteId,
     ),
@@ -240,6 +245,7 @@ export default function Home() {
         onChooseUser={(selected) => {
           setUserId(selected.id);
           setSiteId(selected.default_location_id);
+          setActiveNav('Sell');
         }}
         onEnter={() => setEntryStage('app')}
       />
@@ -258,7 +264,7 @@ export default function Home() {
             POS<span>Perity</span>
           </span>
         </div>
-        <div className="client-switcher">
+        {isAdministrator && <div className="client-switcher">
           <button onClick={() => setClientMenu(!clientMenu)}>
             <span className="client-logo">{client?.code}</span>
             <span>
@@ -287,9 +293,9 @@ export default function Home() {
               ))}
             </div>
           )}
-        </div>
+        </div>}
         <nav>
-          {navItems.map(([label, Icon]) => (
+          {visibleNav.map(([label, Icon]) => (
             <button
               key={label}
               className={activeNav === label ? 'nav-active' : ''}
@@ -327,12 +333,12 @@ export default function Home() {
             </button>
             {userMenu && (
               <div className="user-session-menu">
-                <small>SIMULATE USER LOGIN</small>
+                <small>{isAdministrator ? 'ADMINISTRATOR SESSION' : 'CASHIER SESSION'}</small>
                 <button onClick={() => setEntryStage('welcome')}>
                   <span><Sparkles /></span>
                   <div><strong>Welcome screen</strong><small>View your profile details</small></div>
                 </button>
-                {data.users.map((u) => (
+                {isAdministrator && data.users.map((u) => (
                   <button
                     key={u.id}
                     onClick={() => {
@@ -371,10 +377,11 @@ export default function Home() {
             </div>
           </div>
           <div className="top-actions">
-            <label className="site-select">
+            <label className={`site-select ${isCashier ? 'site-locked' : ''}`}>
               <MapPin />
               <select
                 value={siteId}
+                disabled={isCashier}
                 onChange={(e) => {
                   setSiteId(Number(e.target.value));
                   setCart([]);
@@ -414,7 +421,7 @@ export default function Home() {
                 <div>
                   <strong>{client?.name}</strong>
                   <small>
-                    Selling from {site?.name} · Completed sales post live
+                      {isCashier ? 'Cashier access' : 'Administrator access'} · Selling from {site?.name} · Completed sales post live
                   </small>
                 </div>
               </div>
@@ -596,7 +603,7 @@ export default function Home() {
             warehouse={warehouse}
             onDialog={setDialog}
             onReceive={async (id) => {
-              await post({ action: 'receiveTransfer', id });
+              await post({ action: 'receiveTransfer', id, clientId, userId });
               setNotice('Transfer received and inventory updated');
             }}
           />
@@ -615,7 +622,7 @@ export default function Home() {
           total={subtotal}
           onClose={() => setDialog(null)}
           onSubmit={async (payload) => {
-            const result = await post(payload);
+            const result = await post({ ...payload, userId });
             if (payload.action === 'sale') {
               setCart([]);
               setCustomerId(undefined);
