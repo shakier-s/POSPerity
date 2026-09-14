@@ -1,5 +1,6 @@
 import {
   integer,
+  index,
   real,
   sqliteTable,
   text,
@@ -193,3 +194,20 @@ export const stockTransfers = sqliteTable('stock_transfers', {
   status: text('status').notNull().default('Dispatched'),
   createdAt: text('created_at').notNull(),
 });
+
+export const adjustmentLogs = sqliteTable(
+  'adjustment_logs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    clientId: integer('client_id').notNull().references(() => clients.id),
+    userId: integer('user_id').notNull().references(() => users.id),
+    action: text('action').notNull(),
+    entity: text('entity').notNull(),
+    recordId: integer('record_id'),
+    summary: text('summary').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_adjustment_logs_client_created').on(table.clientId, table.createdAt),
+  ],
+);

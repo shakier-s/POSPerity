@@ -111,6 +111,15 @@ type HeldSaleItem = {
   quantity: number;
   unit_price: number;
 };
+type AdjustmentLog = {
+  id: number;
+  action: string;
+  entity: string;
+  record_id?: number;
+  summary: string;
+  created_at: string;
+  user_name: string;
+};
 type Data = {
   clients: Client[];
   locations: Location[];
@@ -122,6 +131,7 @@ type Data = {
   sales: Sale[];
   heldSales: HeldSale[];
   heldSaleItems: HeldSaleItem[];
+  adjustmentLogs: AdjustmentLog[];
 };
 type CartLine = Product & { quantity: number };
 const navItems = [
@@ -728,6 +738,7 @@ export default function Home() {
             warehouse={warehouse}
             isAdministrator={isAdministrator}
             onDialog={setDialog}
+            onNavigate={setActiveNav}
             onDelete={async (entity, id) => {
               if (!window.confirm('Delete this record? This cannot be undone.')) return;
               await post({ action: 'adminCrud', operation: 'delete', entity, id, clientId, userId });
@@ -1070,6 +1081,7 @@ function Module({
   warehouse,
   isAdministrator,
   onDialog,
+  onNavigate,
   onDelete,
   onReceive,
 }: {
@@ -1081,6 +1093,7 @@ function Module({
   warehouse?: Location;
   isAdministrator: boolean;
   onDialog: (v: string) => void;
+  onNavigate: (v: string) => void;
   onDelete: (entity: string, id: number) => Promise<void>;
   onReceive: (id: number) => void;
 }) {
@@ -1265,9 +1278,30 @@ function Module({
       </Page>
     );
   }
+  if (module === 'Adjustment log') {
+    return (
+      <Page title="Adjustment log" subtitle="A tenant-wide record of data and stock changes">
+        <div className="report-back"><button onClick={() => onNavigate('Reports')}><ChevronRight /> Back to reports</button><span>{data.adjustmentLogs.length} recent events</span></div>
+        <Rows
+          headers={['Date & time', 'User', 'Action', 'Area', 'Details']}
+          rows={data.adjustmentLogs.map((log) => [
+            new Date(log.created_at).toLocaleString(),
+            log.user_name,
+            log.action,
+            `${log.entity}${log.record_id ? ` #${log.record_id}` : ''}`,
+            log.summary,
+          ])}
+        />
+      </Page>
+    );
+  }
   const revenue = data.sales.reduce((s, x) => s + Number(x.total), 0);
   return (
     <Page title="Reports" subtitle="Posted sales across this client">
+      <div className="report-links">
+        <button className="report-link active"><BarChart3 /><span><small>SALES REPORT</small><strong>Sales performance</strong><i>Revenue, transactions and store activity</i></span><ChevronRight /></button>
+        <button className="report-link" onClick={() => onNavigate('Adjustment log')}><Clock3 /><span><small>CONTROL REPORT</small><strong>Adjustment log</strong><i>Who changed what, and when</i></span><ChevronRight /></button>
+      </div>
       <div className="stat-grid">
         <div className="stat-card">
           <span>Posted revenue</span>

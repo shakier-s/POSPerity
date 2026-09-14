@@ -103,6 +103,7 @@ Client
 ├── Stock transfers
 ├── Sales
 │   └── Sale items
+├── Adjustment logs
 └── Held sales
     └── Held sale items
 ```
@@ -192,6 +193,10 @@ A held sale stores the client, original store, cashier, optional customer, refer
 - quantity
 - status
 - creation timestamp
+
+#### `adjustment_logs`
+
+Stores the client, acting user, action, affected entity and record ID, a readable summary, and timestamp. Client administrators and store managers can open the Adjustment Log from the Reports page; results are always restricted to the active client.
 
 ## Permission model
 

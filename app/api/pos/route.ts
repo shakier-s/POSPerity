@@ -45,6 +45,7 @@ export async function GET(request: Request) {
       purchaseOrders,
       transfers,
       sales,
+      adjustmentLogs,
     ] = await Promise.all([
       isAdministrator
         ? db.prepare('SELECT * FROM clients ORDER BY id').all()
@@ -155,6 +156,9 @@ export async function GET(request: Request) {
         )
         .bind(...(isAdministrator ? [clientId] : [clientId, scopedLocationId]))
         .all(),
+      isAdministrator || isManager
+        ? db.prepare('SELECT a.*,u.name AS user_name FROM adjustment_logs a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.id DESC LIMIT 250').bind(clientId).all()
+        : db.prepare('SELECT * FROM adjustment_logs WHERE client_id=? AND 0').bind(clientId).all(),
     ]);
     return json({
       clients: clients.results,
@@ -167,6 +171,7 @@ export async function GET(request: Request) {
       sales: sales.results,
       heldSales: heldSales.results,
       heldSaleItems: heldSaleItems.results,
+      adjustmentLogs: adjustmentLogs.results,
     });
   } catch (error) {
     return bad(
@@ -205,6 +210,9 @@ export async function POST(request: Request) {
     const normalizedRole = actor.role.toLowerCase();
     const isAdministrator = normalizedRole.includes('administrator');
     const isManager = normalizedRole.includes('manager');
+    const audit = async (actionName: string, entity: string, recordId: number | null, summary: string) => {
+      await db.prepare('INSERT INTO adjustment_logs (client_id,user_id,action,entity,record_id,summary,created_at) VALUES (?,?,?,?,?,?,?)').bind(actor.client_id, actor.id, actionName, entity, recordId, summary, now).run();
+    };
     const cashierActions = new Set(['sale', 'customer', 'hold', 'deleteHold']);
     const managerActions = new Set([
       ...cashierActions,
@@ -235,6 +243,7 @@ export async function POST(request: Request) {
           code = String(body.code || '').trim().toUpperCase();
         if (!name || !code) return bad('Company name and code are required');
         await db.prepare('UPDATE clients SET name=?,code=? WHERE id=?').bind(name, code, clientId).run();
+        await audit('Updated', 'Client', clientId, `Updated company details for ${name}`);
         return json({ ok: true });
       }
 
@@ -242,6 +251,7 @@ export async function POST(request: Request) {
         if (operation === 'delete') {
           const result = await db.prepare('DELETE FROM locations WHERE id=? AND client_id=?').bind(id, clientId).run();
           if (!result.meta.changes) return bad('Site not found', 404);
+          await audit('Deleted', 'Site', id, `Deleted site record #${id}`);
           return json({ ok: true });
         }
         const name = String(body.name || '').trim(),
@@ -250,9 +260,11 @@ export async function POST(request: Request) {
         if (!name || !['store', 'warehouse'].includes(type)) return bad('Site name and type are required');
         if (operation === 'create') {
           const result = await db.prepare('INSERT INTO locations (client_id,name,type,address) VALUES (?,?,?,?)').bind(clientId, name, type, address).run();
+          await audit('Created', 'Site', Number(result.meta.last_row_id), `Created ${type} ${name}`);
           return json({ ok: true, id: result.meta.last_row_id }, 201);
         }
         await db.prepare('UPDATE locations SET name=?,type=?,address=? WHERE id=? AND client_id=?').bind(name, type, address, id, clientId).run();
+        await audit('Updated', 'Site', id, `Updated ${type} ${name}`);
         return json({ ok: true });
       }
 
@@ -262,6 +274,7 @@ export async function POST(request: Request) {
             db.prepare('DELETE FROM inventory WHERE product_id=? AND client_id=?').bind(id, clientId),
             db.prepare('DELETE FROM products WHERE id=? AND client_id=?').bind(id, clientId),
           ]);
+          await audit('Deleted', 'Product', id, `Deleted product record #${id}`);
           return json({ ok: true });
         }
         const name = String(body.name || '').trim(), sku = String(body.sku || '').trim(),
@@ -278,21 +291,25 @@ export async function POST(request: Request) {
           await db.prepare('UPDATE products SET sku=?,barcode=?,name=?,category=?,price=?,cost=? WHERE id=? AND client_id=?').bind(sku, barcode || null, name, category, price, cost, id, clientId).run();
         }
         await db.prepare('INSERT INTO inventory (client_id,location_id,product_id,quantity,reorder_level) VALUES (?,?,?,?,?) ON CONFLICT(location_id,product_id) DO UPDATE SET quantity=excluded.quantity').bind(clientId, locationId, productId, stock, 5).run();
+        await audit(operation === 'create' ? 'Created' : 'Updated', 'Product', productId, `${operation === 'create' ? 'Created' : 'Updated'} ${name}; stock at location #${locationId} set to ${stock}`);
         return json({ ok: true, id: productId }, operation === 'create' ? 201 : 200);
       }
 
       if (entity === 'customer') {
         if (operation === 'delete') {
           await db.prepare('DELETE FROM customers WHERE id=? AND client_id=?').bind(id, clientId).run();
+          await audit('Deleted', 'Customer', id, `Deleted customer record #${id}`);
           return json({ ok: true });
         }
         const name = String(body.name || '').trim(), email = String(body.email || '').trim(), phone = String(body.phone || '').trim();
         if (!name) return bad('Customer name is required');
         if (operation === 'create') {
           const result = await db.prepare('INSERT INTO customers (client_id,name,email,phone,created_at) VALUES (?,?,?,?,?)').bind(clientId, name, email, phone, now).run();
+          await audit('Created', 'Customer', Number(result.meta.last_row_id), `Created customer ${name}`);
           return json({ ok: true, id: result.meta.last_row_id }, 201);
         }
         await db.prepare('UPDATE customers SET name=?,email=?,phone=? WHERE id=? AND client_id=?').bind(name, email, phone, id, clientId).run();
+        await audit('Updated', 'Customer', id, `Updated customer ${name}`);
         return json({ ok: true });
       }
 
@@ -300,6 +317,7 @@ export async function POST(request: Request) {
         if (operation === 'delete') {
           if (id === actor.id) return bad('You cannot delete your own active account');
           await db.prepare('DELETE FROM users WHERE id=? AND client_id=?').bind(id, clientId).run();
+          await audit('Deleted', 'User', id, `Deleted user record #${id}`);
           return json({ ok: true });
         }
         const name = String(body.name || '').trim(), email = String(body.email || '').trim(),
@@ -307,15 +325,18 @@ export async function POST(request: Request) {
         if (!name || !email || !locationId) return bad('Name, email and default store are required');
         if (operation === 'create') {
           const result = await db.prepare('INSERT INTO users (client_id,default_location_id,name,email,role,status) VALUES (?,?,?,?,?,?)').bind(clientId, locationId, name, email, role, status).run();
+          await audit('Created', 'User', Number(result.meta.last_row_id), `Created ${role} ${name}`);
           return json({ ok: true, id: result.meta.last_row_id }, 201);
         }
         await db.prepare('UPDATE users SET default_location_id=?,name=?,email=?,role=?,status=? WHERE id=? AND client_id=?').bind(locationId, name, email, role, status, id, clientId).run();
+        await audit('Updated', 'User', id, `Updated ${role} ${name}; status ${status}`);
         return json({ ok: true });
       }
 
       if (entity === 'purchaseOrder') {
         if (operation === 'delete') {
           await db.prepare("DELETE FROM purchase_orders WHERE id=? AND client_id=? AND status='Draft'").bind(id, clientId).run();
+          await audit('Deleted', 'Purchase order', id, `Deleted draft purchase order #${id}`);
           return json({ ok: true });
         }
         const supplier = String(body.supplier || '').trim(), locationId = Number(body.destinationLocationId),
@@ -323,9 +344,11 @@ export async function POST(request: Request) {
         if (!supplier || !locationId || total < 0) return bad('Supplier, destination and valid total are required');
         if (operation === 'create') {
           const result = await db.prepare('INSERT INTO purchase_orders (client_id,destination_location_id,supplier,status,total,created_at) VALUES (?,?,?,?,?,?)').bind(clientId, locationId, supplier, status, total, now).run();
+          await audit('Created', 'Purchase order', Number(result.meta.last_row_id), `Created ${status} order for ${supplier}`);
           return json({ ok: true, id: result.meta.last_row_id }, 201);
         }
         await db.prepare('UPDATE purchase_orders SET destination_location_id=?,supplier=?,status=?,total=? WHERE id=? AND client_id=?').bind(locationId, supplier, status, total, id, clientId).run();
+        await audit('Updated', 'Purchase order', id, `Updated order for ${supplier}; status ${status}`);
         return json({ ok: true });
       }
       return bad('This table is not available for client administration');
@@ -347,6 +370,7 @@ export async function POST(request: Request) {
           now,
         )
         .run();
+      await audit('Created', 'Customer', Number(result.meta.last_row_id), `Created customer ${name}`);
       return json({ ok: true, id: result.meta.last_row_id }, 201);
     }
     if (action === 'user') {
@@ -372,6 +396,7 @@ export async function POST(request: Request) {
         )
         .bind(clientId, locationId, name, email, requestedRole, 'Active')
         .run();
+      await audit('Created', 'User', Number(result.meta.last_row_id), `Created ${requestedRole} ${name}`);
       return json({ ok: true, id: result.meta.last_row_id }, 201);
     }
     if (action === 'purchaseOrder') {
@@ -392,6 +417,7 @@ export async function POST(request: Request) {
         )
         .bind(clientId, locationId, supplier, 'Draft', total, now)
         .run();
+      await audit('Created', 'Purchase order', Number(result.meta.last_row_id), `Created draft order for ${supplier}`);
       return json({ ok: true, id: result.meta.last_row_id }, 201);
     }
     if (action === 'transfer') {
@@ -430,6 +456,7 @@ export async function POST(request: Request) {
         )
         .bind(clientId, from, to, productId, quantity, 'Dispatched', now)
         .run();
+      await audit('Created', 'Stock transfer', Number(result.meta.last_row_id), `Dispatched ${quantity} units of product #${productId} from location #${from} to #${to}`);
       return json({ ok: true, id: result.meta.last_row_id }, 201);
     }
     if (action === 'receiveTransfer') {
@@ -477,6 +504,7 @@ export async function POST(request: Request) {
           .prepare("UPDATE stock_transfers SET status='Received' WHERE id=?")
           .bind(id),
       ]);
+      await audit('Received', 'Stock transfer', id, `Received ${transfer.quantity} units of product #${transfer.product_id}; stock moved from location #${transfer.from_location_id} to #${transfer.to_location_id}`);
       return json({ ok: true });
     }
     if (action === 'hold') {
@@ -540,6 +568,7 @@ export async function POST(request: Request) {
             ),
         ),
       );
+      await audit('Created', 'Held sale', heldSaleId, `Held sale ${reference} for ${items.length} line items`);
       return json({ ok: true, id: heldSaleId, reference, total }, 201);
     }
     if (action === 'deleteHold') {
@@ -561,6 +590,7 @@ export async function POST(request: Request) {
         db.prepare('DELETE FROM held_sale_items WHERE held_sale_id=?').bind(id),
         db.prepare('DELETE FROM held_sales WHERE id=?').bind(id),
       ]);
+      await audit('Deleted', 'Held sale', id, `Released held sale #${id}`);
       return json({ ok: true });
     }
     if (action === 'sale') {
@@ -671,6 +701,7 @@ export async function POST(request: Request) {
         );
       }
       await db.batch(statements);
+      await audit('Posted', 'Sale', saleId, `Posted ${paymentMethod} sale ${receipt}; total ${total.toFixed(2)}; inventory deducted at location #${locationId}`);
       return json(
         {
           ok: true,
