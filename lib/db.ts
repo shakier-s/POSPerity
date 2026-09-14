@@ -157,3 +157,16 @@ export async function seedIfEmpty(db: DB) {
       .bind('Cape Coffee Co.', now, 'Fresh Foods SA', now),
   ]);
 }
+
+export async function ensureProductBarcodes(db: DB) {
+  await db
+    .prepare(`UPDATE products SET barcode = CASE sku
+      WHEN 'CAP-001' THEN '6001000000017' WHEN 'MAT-001' THEN '6001000000024'
+      WHEN 'WRP-001' THEN '6001000000031' WHEN 'AVO-001' THEN '6001000000048'
+      WHEN 'BRY-001' THEN '6001000000055' WHEN 'CRO-001' THEN '6001000000062'
+      WHEN 'BAN-001' THEN '6001000000079' WHEN 'WAT-001' THEN '6001000000086'
+      WHEN 'JUI-001' THEN '6001000000093' WHEN 'GRA-001' THEN '6001000000109'
+      WHEN 'HOU-001' THEN '6001000000116' WHEN 'COO-001' THEN '6001000000123'
+      ELSE barcode END WHERE barcode IS NULL`)
+    .run();
+}

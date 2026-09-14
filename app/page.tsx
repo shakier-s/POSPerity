@@ -47,6 +47,7 @@ type Location = {
 type Product = {
   id: number;
   sku: string;
+  barcode?: string;
   name: string;
   category: string;
   price: number;
@@ -231,7 +232,9 @@ export default function Home() {
     filtered = siteProducts.filter(
       (p) =>
         (category === 'All items' || p.category === category) &&
-        p.name.toLowerCase().includes(query.toLowerCase()),
+        `${p.name} ${p.sku} ${p.barcode || ''}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase()),
     ),
     subtotal = cart.reduce((s, l) => s + l.price * l.quantity, 0),
     tax = subtotal - subtotal / 1.15;
@@ -253,6 +256,29 @@ export default function Home() {
         )
         .filter((x) => x.quantity > 0),
     );
+  const scanOrSearch = () => {
+    const value = query.trim().toLowerCase();
+    if (!value) return;
+    const compact = value.replace(/[\s-]/g, '');
+    const match = siteProducts.find(
+      (product) =>
+        product.barcode?.toLowerCase() === value ||
+        product.sku.toLowerCase() === value ||
+        product.sku.toLowerCase().replace(/[\s-]/g, '') === compact ||
+        product.name.toLowerCase() === value,
+    );
+    if (!match) {
+      setNotice(`No exact product found for “${query.trim()}”`);
+      return;
+    }
+    if (!match.stock) {
+      setNotice(`${match.name} is out of stock at ${site?.name}`);
+      return;
+    }
+    add(match);
+    setQuery('');
+    setNotice(`${match.name} scanned into the cart`);
+  };
   if (entryStage === 'splash')
     return <SplashScreen onContinue={() => setEntryStage('welcome')} />;
   if (!data)
@@ -517,6 +543,12 @@ export default function Home() {
                   <input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        scanOrSearch();
+                      }
+                    }}
                     placeholder="Search products or scan barcode"
                   />
                   <kbd>⌘ K</kbd>
@@ -566,7 +598,9 @@ export default function Home() {
                     </span>
                     <span className="product-meta">
                       <strong>{p.name}</strong>
-                      <small>{p.category}</small>
+                      <small>
+                        {p.category} · {p.sku}
+                      </small>
                       <b>{money(p.price)}</b>
                     </span>
                     <span className="add-button">

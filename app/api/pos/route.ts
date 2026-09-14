@@ -1,4 +1,4 @@
-import { getDb, seedIfEmpty } from '@/lib/db';
+import { ensureProductBarcodes, getDb, seedIfEmpty } from '@/lib/db';
 
 const json = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   try {
     const db = getDb();
     await seedIfEmpty(db);
+    await ensureProductBarcodes(db);
     const url = new URL(request.url),
       clientId = Number(url.searchParams.get('clientId') || 1),
       actingUserId = Number(url.searchParams.get('userId') || 0);
@@ -179,6 +180,7 @@ export async function POST(request: Request) {
   try {
     const db = getDb();
     await seedIfEmpty(db);
+    await ensureProductBarcodes(db);
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action || '');
     const now = new Date().toISOString();

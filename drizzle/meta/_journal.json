@@ -15,6 +15,13 @@
       "when": 1789408255230,
       "tag": "0001_old_adam_warlock",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789408857551,
+      "tag": "0002_rich_pretty_boy",
+      "breakpoints": true
     }
   ]
 }

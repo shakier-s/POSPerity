@@ -30,6 +30,7 @@ export const products = sqliteTable(
       .notNull()
       .references(() => clients.id),
     sku: text('sku').notNull(),
+    barcode: text('barcode'),
     name: text('name').notNull(),
     category: text('category').notNull(),
     price: real('price').notNull(),
