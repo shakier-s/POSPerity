@@ -218,6 +218,118 @@ export async function POST(request: Request) {
       !(isManager ? managerActions : cashierActions).has(action)
     )
       return bad(`${actor.role} users cannot perform this action`, 403);
+    if (action === 'adminCrud') {
+      if (!isAdministrator)
+        return bad('Only client administrators can manage these records', 403);
+      const entity = String(body.entity || ''),
+        operation = String(body.operation || ''),
+        id = Number(body.id || 0),
+        clientId = actor.client_id;
+      if (!['create', 'update', 'delete'].includes(operation))
+        return bad('A valid CRUD operation is required');
+
+      if (entity === 'client') {
+        if (operation !== 'update')
+          return bad('Client administrators may update, but not create or delete, their company');
+        const name = String(body.name || '').trim(),
+          code = String(body.code || '').trim().toUpperCase();
+        if (!name || !code) return bad('Company name and code are required');
+        await db.prepare('UPDATE clients SET name=?,code=? WHERE id=?').bind(name, code, clientId).run();
+        return json({ ok: true });
+      }
+
+      if (entity === 'location') {
+        if (operation === 'delete') {
+          const result = await db.prepare('DELETE FROM locations WHERE id=? AND client_id=?').bind(id, clientId).run();
+          if (!result.meta.changes) return bad('Site not found', 404);
+          return json({ ok: true });
+        }
+        const name = String(body.name || '').trim(),
+          type = String(body.type || 'store'),
+          address = String(body.address || '').trim();
+        if (!name || !['store', 'warehouse'].includes(type)) return bad('Site name and type are required');
+        if (operation === 'create') {
+          const result = await db.prepare('INSERT INTO locations (client_id,name,type,address) VALUES (?,?,?,?)').bind(clientId, name, type, address).run();
+          return json({ ok: true, id: result.meta.last_row_id }, 201);
+        }
+        await db.prepare('UPDATE locations SET name=?,type=?,address=? WHERE id=? AND client_id=?').bind(name, type, address, id, clientId).run();
+        return json({ ok: true });
+      }
+
+      if (entity === 'product') {
+        if (operation === 'delete') {
+          await db.batch([
+            db.prepare('DELETE FROM inventory WHERE product_id=? AND client_id=?').bind(id, clientId),
+            db.prepare('DELETE FROM products WHERE id=? AND client_id=?').bind(id, clientId),
+          ]);
+          return json({ ok: true });
+        }
+        const name = String(body.name || '').trim(), sku = String(body.sku || '').trim(),
+          barcode = String(body.barcode || '').trim(), category = String(body.category || '').trim(),
+          price = Number(body.price), cost = Number(body.cost), locationId = Number(body.locationId),
+          stock = Math.max(0, Number(body.stock || 0));
+        const location = await db.prepare('SELECT id FROM locations WHERE id=? AND client_id=?').bind(locationId, clientId).first();
+        if (!name || !sku || price < 0 || cost < 0 || !location) return bad('Valid product, pricing and location details are required');
+        let productId = id;
+        if (operation === 'create') {
+          const result = await db.prepare('INSERT INTO products (client_id,sku,barcode,name,category,price,cost,icon,color) VALUES (?,?,?,?,?,?,?,?,?)').bind(clientId, sku, barcode || null, name, category, price, cost, 'Package', '#35383c').run();
+          productId = Number(result.meta.last_row_id);
+        } else {
+          await db.prepare('UPDATE products SET sku=?,barcode=?,name=?,category=?,price=?,cost=? WHERE id=? AND client_id=?').bind(sku, barcode || null, name, category, price, cost, id, clientId).run();
+        }
+        await db.prepare('INSERT INTO inventory (client_id,location_id,product_id,quantity,reorder_level) VALUES (?,?,?,?,?) ON CONFLICT(location_id,product_id) DO UPDATE SET quantity=excluded.quantity').bind(clientId, locationId, productId, stock, 5).run();
+        return json({ ok: true, id: productId }, operation === 'create' ? 201 : 200);
+      }
+
+      if (entity === 'customer') {
+        if (operation === 'delete') {
+          await db.prepare('DELETE FROM customers WHERE id=? AND client_id=?').bind(id, clientId).run();
+          return json({ ok: true });
+        }
+        const name = String(body.name || '').trim(), email = String(body.email || '').trim(), phone = String(body.phone || '').trim();
+        if (!name) return bad('Customer name is required');
+        if (operation === 'create') {
+          const result = await db.prepare('INSERT INTO customers (client_id,name,email,phone,created_at) VALUES (?,?,?,?,?)').bind(clientId, name, email, phone, now).run();
+          return json({ ok: true, id: result.meta.last_row_id }, 201);
+        }
+        await db.prepare('UPDATE customers SET name=?,email=?,phone=? WHERE id=? AND client_id=?').bind(name, email, phone, id, clientId).run();
+        return json({ ok: true });
+      }
+
+      if (entity === 'user') {
+        if (operation === 'delete') {
+          if (id === actor.id) return bad('You cannot delete your own active account');
+          await db.prepare('DELETE FROM users WHERE id=? AND client_id=?').bind(id, clientId).run();
+          return json({ ok: true });
+        }
+        const name = String(body.name || '').trim(), email = String(body.email || '').trim(),
+          role = String(body.role || 'Cashier'), status = String(body.status || 'Active'), locationId = Number(body.defaultLocationId);
+        if (!name || !email || !locationId) return bad('Name, email and default store are required');
+        if (operation === 'create') {
+          const result = await db.prepare('INSERT INTO users (client_id,default_location_id,name,email,role,status) VALUES (?,?,?,?,?,?)').bind(clientId, locationId, name, email, role, status).run();
+          return json({ ok: true, id: result.meta.last_row_id }, 201);
+        }
+        await db.prepare('UPDATE users SET default_location_id=?,name=?,email=?,role=?,status=? WHERE id=? AND client_id=?').bind(locationId, name, email, role, status, id, clientId).run();
+        return json({ ok: true });
+      }
+
+      if (entity === 'purchaseOrder') {
+        if (operation === 'delete') {
+          await db.prepare("DELETE FROM purchase_orders WHERE id=? AND client_id=? AND status='Draft'").bind(id, clientId).run();
+          return json({ ok: true });
+        }
+        const supplier = String(body.supplier || '').trim(), locationId = Number(body.destinationLocationId),
+          total = Number(body.total), status = String(body.status || 'Draft');
+        if (!supplier || !locationId || total < 0) return bad('Supplier, destination and valid total are required');
+        if (operation === 'create') {
+          const result = await db.prepare('INSERT INTO purchase_orders (client_id,destination_location_id,supplier,status,total,created_at) VALUES (?,?,?,?,?,?)').bind(clientId, locationId, supplier, status, total, now).run();
+          return json({ ok: true, id: result.meta.last_row_id }, 201);
+        }
+        await db.prepare('UPDATE purchase_orders SET destination_location_id=?,supplier=?,status=?,total=? WHERE id=? AND client_id=?').bind(locationId, supplier, status, total, id, clientId).run();
+        return json({ ok: true });
+      }
+      return bad('This table is not available for client administration');
+    }
     if (action === 'customer') {
       const clientId = Number(body.clientId),
         name = String(body.name || '').trim();

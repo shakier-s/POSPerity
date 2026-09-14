@@ -18,6 +18,7 @@ import {
   Menu,
   Minus,
   PackageCheck,
+  Pencil,
   Plus,
   ReceiptText,
   Search,
@@ -68,6 +69,7 @@ type User = {
 };
 type PO = {
   id: number;
+  destination_location_id: number;
   supplier: string;
   status: string;
   total: number;
@@ -724,7 +726,13 @@ export default function Home() {
             locations={locations}
             site={site!}
             warehouse={warehouse}
+            isAdministrator={isAdministrator}
             onDialog={setDialog}
+            onDelete={async (entity, id) => {
+              if (!window.confirm('Delete this record? This cannot be undone.')) return;
+              await post({ action: 'adminCrud', operation: 'delete', entity, id, clientId, userId });
+              setNotice('Record deleted');
+            }}
             onReceive={async (id) => {
               await post({ action: 'receiveTransfer', id, clientId, userId });
               setNotice('Transfer received and inventory updated');
@@ -1060,7 +1068,9 @@ function Module({
   locations,
   site,
   warehouse,
+  isAdministrator,
   onDialog,
+  onDelete,
   onReceive,
 }: {
   module: string;
@@ -1069,7 +1079,9 @@ function Module({
   locations: Location[];
   site: Location;
   warehouse?: Location;
+  isAdministrator: boolean;
   onDialog: (v: string) => void;
+  onDelete: (entity: string, id: number) => Promise<void>;
   onReceive: (id: number) => void;
 }) {
   const actions: Record<string, [string, string]> = {
@@ -1077,10 +1089,12 @@ function Module({
     Users: ['Invite user', 'user'],
     'Purchase orders': ['New purchase order', 'po'],
     Distribution: ['New transfer', 'transfer'],
+    Sites: ['Add site', 'create:location'],
+    Inventory: ['Add product', 'create:product'],
   };
   if (module === 'Sites')
     return (
-      <Page title="Sites" subtitle="Every trading location and warehouse">
+      <Page title="Sites" subtitle="Every trading location and warehouse" action={isAdministrator ? actions[module] : undefined} onDialog={onDialog}>
         <div className="site-grid">
           {locations.map((l) => (
             <article
@@ -1111,6 +1125,7 @@ function Module({
                   <dd>Live</dd>
                 </div>
               </dl>
+              {isAdministrator && <CrudButtons onEdit={() => onDialog(`edit:location:${l.id}`)} onDelete={() => void onDelete('location', l.id)} />}
             </article>
           ))}
         </div>
@@ -1125,12 +1140,13 @@ function Module({
         onDialog={onDialog}
       >
         <Rows
-          headers={['Customer', 'Contact', 'Phone', 'Status']}
+          headers={['Customer', 'Contact', 'Phone', 'Status', ...(isAdministrator ? ['Manage'] : [])]}
           rows={data.customers.map((c) => [
             c.name,
             c.email || '—',
             c.phone || '—',
             'Live',
+            ...(isAdministrator ? [<CrudButtons key={c.id} onEdit={() => onDialog(`edit:customer:${c.id}`)} onDelete={() => void onDelete('customer', c.id)} />] : []),
           ])}
         />
       </Page>
@@ -1144,12 +1160,13 @@ function Module({
         onDialog={onDialog}
       >
         <Rows
-          headers={['User', 'Role', 'Default store', 'Status']}
+          headers={['User', 'Role', 'Default store', 'Status', ...(isAdministrator ? ['Manage'] : [])]}
           rows={data.users.map((u) => [
             u.name,
             u.role,
             locations.find((l) => l.id === u.default_location_id)?.name || '—',
             u.status,
+            ...(isAdministrator ? [<CrudButtons key={u.id} onEdit={() => onDialog(`edit:user:${u.id}`)} onDelete={() => void onDelete('user', u.id)} />] : []),
           ])}
         />
       </Page>
@@ -1163,13 +1180,14 @@ function Module({
         onDialog={onDialog}
       >
         <Rows
-          headers={['Order', 'Supplier', 'Destination', 'Status', 'Total']}
+          headers={['Order', 'Supplier', 'Destination', 'Status', 'Total', ...(isAdministrator ? ['Manage'] : [])]}
           rows={data.purchaseOrders.map((p) => [
             `PO-${String(p.id).padStart(4, '0')}`,
             p.supplier,
             p.destination,
             p.status,
             money(p.total),
+            ...(isAdministrator ? [<CrudButtons key={p.id} onEdit={() => onDialog(`edit:purchaseOrder:${p.id}`)} onDelete={() => void onDelete('purchaseOrder', p.id)} />] : []),
           ])}
         />
       </Page>
@@ -1232,15 +1250,16 @@ function Module({
   if (module === 'Inventory') {
     const rows = data.products.filter((p) => p.location_id === site.id);
     return (
-      <Page title="Inventory" subtitle={`Live stock at ${site.name}`}>
+      <Page title="Inventory" subtitle={`Live stock at ${site.name}`} action={isAdministrator ? actions[module] : undefined} onDialog={onDialog}>
         <Rows
-          headers={['Product', 'SKU', 'Category', 'On hand', 'Value']}
+          headers={['Product', 'SKU', 'Category', 'On hand', 'Value', ...(isAdministrator ? ['Manage'] : [])]}
           rows={rows.map((p) => [
             p.name,
             p.sku,
             p.category,
             String(p.stock),
             money(p.stock * p.cost),
+            ...(isAdministrator ? [<CrudButtons key={`${p.id}-${p.location_id}`} onEdit={() => onDialog(`edit:product:${p.id}:${p.location_id}`)} onDelete={() => void onDelete('product', p.id)} />] : []),
           ])}
         />
       </Page>
@@ -1321,7 +1340,10 @@ function Page({
     </div>
   );
 }
-function Rows({ headers, rows }: { headers: string[]; rows: string[][] }) {
+function CrudButtons({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
+  return <div className="crud-actions"><button aria-label="Edit record" onClick={onEdit}><Pencil /></button><button aria-label="Delete record" onClick={onDelete}><Trash2 /></button></div>;
+}
+function Rows({ headers, rows }: { headers: string[]; rows: React.ReactNode[][] }) {
   return (
     <section className="live-table">
       <header>
@@ -1569,43 +1591,55 @@ function Dialog({
     );
   let title = '',
     fields: React.ReactNode,
-    action = '';
-  if (kind === 'customer') {
-    title = 'Add customer';
-    action = 'customer';
+    action = '',
+    entity = '',
+    operation = '',
+    recordId = 0;
+  const parts = kind.split(':');
+  if (parts[0] === 'edit' || parts[0] === 'create') {
+    operation = parts[0] === 'edit' ? 'update' : 'create';
+    entity = parts[1];
+    recordId = Number(parts[2] || 0);
+    action = 'adminCrud';
+  }
+  if (kind === 'customer' || entity === 'customer') {
+    const record = data.customers.find((item) => item.id === recordId);
+    title = record ? 'Edit customer' : 'Add customer';
+    if (!action) action = 'customer';
     fields = (
       <>
         <label>
           Full name
-          <input name="name" required />
+          <input name="name" defaultValue={record?.name} required />
         </label>
         <label>
           Email
-          <input name="email" type="email" />
+          <input name="email" type="email" defaultValue={record?.email} />
         </label>
         <label>
           Phone
-          <input name="phone" />
+          <input name="phone" defaultValue={record?.phone} />
         </label>
       </>
     );
   }
-  if (kind === 'user') {
-    title = 'Invite user';
-    action = 'user';
+  if (kind === 'user' || entity === 'user') {
+    const record = data.users.find((item) => item.id === recordId);
+    title = record ? 'Edit user' : 'Invite user';
+    if (!action) action = 'user';
     fields = (
       <>
         <label>
           Full name
-          <input name="name" required />
+          <input name="name" defaultValue={record?.name} required />
         </label>
         <label>
           Email
-          <input name="email" type="email" required />
+          <input name="email" type="email" defaultValue={record?.email} required />
         </label>
         <label>
           Role
-          <select name="role">
+          <select name="role" defaultValue={record?.role || 'Cashier'}>
             <option>Cashier</option>
             {!managerCreatingUser && <option>Store manager</option>}
             {!managerCreatingUser && <option>Client administrator</option>}
@@ -1613,7 +1647,7 @@ function Dialog({
         </label>
         <label>
           Default store
-          <select name="defaultLocationId">
+          <select name="defaultLocationId" defaultValue={record?.default_location_id}>
             {stores.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -1621,21 +1655,23 @@ function Dialog({
             ))}
           </select>
         </label>
+        {record && <label>Status<select name="status" defaultValue={record.status}><option>Active</option><option>Suspended</option></select></label>}
       </>
     );
   }
-  if (kind === 'po') {
-    title = 'New purchase order';
-    action = 'purchaseOrder';
+  if (kind === 'po' || entity === 'purchaseOrder') {
+    const record = data.purchaseOrders.find((item) => item.id === recordId);
+    title = record ? 'Edit purchase order' : 'New purchase order';
+    if (!action) action = 'purchaseOrder';
     fields = (
       <>
         <label>
           Supplier
-          <input name="supplier" required />
+          <input name="supplier" defaultValue={record?.supplier} required />
         </label>
         <label>
           Destination
-          <select name="destinationLocationId">
+          <select name="destinationLocationId" defaultValue={record?.destination_location_id}>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.name}
@@ -1645,10 +1681,21 @@ function Dialog({
         </label>
         <label>
           Order total
-          <input name="total" type="number" min="0" step="0.01" required />
+          <input name="total" type="number" min="0" step="0.01" defaultValue={record?.total} required />
         </label>
+        {record && <label>Status<select name="status" defaultValue={record.status}><option>Draft</option><option>Submitted</option><option>Received</option><option>Cancelled</option></select></label>}
       </>
     );
+  }
+  if (entity === 'location') {
+    const record = data.locations.find((item) => item.id === recordId);
+    title = record ? 'Edit site' : 'Add site';
+    fields = <><label>Site name<input name="name" defaultValue={record?.name} required /></label><label>Type<select name="type" defaultValue={record?.type || 'store'}><option value="store">Store</option><option value="warehouse">Warehouse</option></select></label><label>Address<input name="address" defaultValue={record?.address} /></label></>;
+  }
+  if (entity === 'product') {
+    const locationId = Number(parts[3] || siteId), record = data.products.find((item) => item.id === recordId && item.location_id === locationId);
+    title = record ? 'Edit product and stock' : 'Add product';
+    fields = <><label>Product name<input name="name" defaultValue={record?.name} required /></label><label>SKU<input name="sku" defaultValue={record?.sku} required /></label><label>Barcode<input name="barcode" defaultValue={record?.barcode} /></label><label>Category<input name="category" defaultValue={record?.category} required /></label><label>Selling price<input name="price" type="number" min="0" step="0.01" defaultValue={record?.price} required /></label><label>Cost<input name="cost" type="number" min="0" step="0.01" defaultValue={record?.cost} required /></label><label>Location<select name="locationId" defaultValue={locationId}>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label><label>On hand<input name="stock" type="number" min="0" defaultValue={record?.stock || 0} required /></label></>;
   }
   if (kind === 'transfer') {
     title = 'New stock transfer';
@@ -1696,6 +1743,9 @@ function Dialog({
       <form onSubmit={submit}>
         <input type="hidden" name="action" value={action} />
         <input type="hidden" name="clientId" value={clientId} />
+        {entity && <input type="hidden" name="entity" value={entity} />}
+        {operation && <input type="hidden" name="operation" value={operation} />}
+        {recordId > 0 && <input type="hidden" name="id" value={recordId} />}
         {fields}
         <button className="dialog-primary" disabled={busy}>
           {busy ? 'Saving…' : 'Save live record'}

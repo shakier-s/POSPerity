@@ -208,6 +208,8 @@ Authorization is enforced in the API as well as the interface.
 | Users | All client users and roles | Cashiers for assigned store | No |
 | Sites/client switching | Yes | No | No |
 
+Client administrators have tenant-scoped create, read, update and delete controls for sites, products and location stock, customers, users, and draft purchase orders. Company details may be updated but the client tenant itself cannot be created or deleted from inside its own portal. Posted sales and received transfers are immutable audit records. Deletes that would break transaction history are rejected.
+
 Cashiers can see only **Sell** and **Customers**. Store managers see Sell, Inventory, Distribution, Customers, Users, Purchase Orders, and Reports. Client administrators see every module.
 
 ## Application entry and sessions
