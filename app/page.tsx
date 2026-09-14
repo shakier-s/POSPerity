@@ -4,10 +4,12 @@ import {
   BarChart3,
   Bell,
   Boxes,
+  BriefcaseBusiness,
   Building2,
   ChevronDown,
   ChevronRight,
   CircleUserRound,
+  Clock3,
   CreditCard,
   LayoutGrid,
   MapPin,
@@ -19,6 +21,8 @@ import {
   Search,
   ShoppingBag,
   ShoppingCart,
+  ShieldCheck,
+  Sparkles,
   Store,
   Tag,
   Trash2,
@@ -114,6 +118,9 @@ const initials = (n: string) =>
     .toUpperCase();
 export default function Home() {
   const [data, setData] = useState<Data | null>(null),
+    [entryStage, setEntryStage] = useState<'splash' | 'welcome' | 'app'>(
+      'splash',
+    ),
     [clientId, setClientId] = useState(1),
     [siteId, setSiteId] = useState(0),
     [userId, setUserId] = useState(0),
@@ -149,6 +156,10 @@ export default function Home() {
   useEffect(() => {
     load().catch((e) => setNotice(e.message));
   }, [load]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEntryStage('welcome'), 2200);
+    return () => window.clearTimeout(timer);
+  }, []);
   const post = async (body: Record<string, unknown>) => {
     setBusy(true);
     setNotice('');
@@ -206,6 +217,8 @@ export default function Home() {
         )
         .filter((x) => x.quantity > 0),
     );
+  if (entryStage === 'splash')
+    return <SplashScreen onContinue={() => setEntryStage('welcome')} />;
   if (!data)
     return (
       <main className="loading-screen">
@@ -215,6 +228,21 @@ export default function Home() {
         <strong>Opening POSPerity…</strong>
         <small>{notice || 'Connecting to live records'}</small>
       </main>
+    );
+  if (entryStage === 'welcome')
+    return (
+      <WelcomeScreen
+        client={client}
+        user={user}
+        site={site}
+        users={data.users}
+        locations={locations}
+        onChooseUser={(selected) => {
+          setUserId(selected.id);
+          setSiteId(selected.default_location_id);
+        }}
+        onEnter={() => setEntryStage('app')}
+      />
     );
   return (
     <main className="app-shell">
@@ -300,6 +328,10 @@ export default function Home() {
             {userMenu && (
               <div className="user-session-menu">
                 <small>SIMULATE USER LOGIN</small>
+                <button onClick={() => setEntryStage('welcome')}>
+                  <span><Sparkles /></span>
+                  <div><strong>Welcome screen</strong><small>View your profile details</small></div>
+                </button>
                 {data.users.map((u) => (
                   <button
                     key={u.id}
@@ -603,6 +635,57 @@ export default function Home() {
     </main>
   );
 }
+function SplashScreen({ onContinue }: { onContinue: () => void }) {
+  return (
+    <main className="splash-screen" onClick={onContinue}>
+      <div className="splash-glow splash-glow-one" />
+      <div className="splash-glow splash-glow-two" />
+      <section className="splash-content">
+        <div className="splash-logo"><BadgeDollarSign /></div>
+        <div className="splash-name">POS<span>Perity</span></div>
+        <p>Smarter selling. Connected inventory. Prosperous business.</p>
+        <div className="splash-loader"><i /></div>
+      </section>
+      <footer>
+        <small>BROUGHT TO YOU BY</small>
+        <strong><span>Data</span>Wiz Consulting</strong>
+      </footer>
+    </main>
+  );
+}
+
+function WelcomeScreen({client,user,site,users,locations,onChooseUser,onEnter}:{client?:Client;user?:User;site?:Location;users:User[];locations:Location[];onChooseUser:(user:User)=>void;onEnter:()=>void}) {
+  return (
+    <main className="welcome-screen">
+      <div className="welcome-orb welcome-orb-one"/><div className="welcome-orb welcome-orb-two"/>
+      <header className="welcome-header">
+        <div className="welcome-brand"><span><BadgeDollarSign/></span>POS<b>Perity</b></div>
+        <div className="datawiz-mini"><small>POWERED BY</small><strong><span>Data</span>Wiz Consulting</strong></div>
+      </header>
+      <section className="welcome-shell">
+        <div className="welcome-copy">
+          <div className="welcome-kicker"><Sparkles/> Your workspace is ready</div>
+          <h1>Welcome back,<br/><span>{user?.name.split(' ')[0]}</span>.</h1>
+          <p>You’re signed in to <strong>{client?.name}</strong>. Everything you need to run today’s sales, stock and customers is ready.</p>
+          <div className="welcome-trust"><span><ShieldCheck/></span><div><strong>Secure company workspace</strong><small>Your access and activity stay within {client?.name}.</small></div></div>
+        </div>
+        <article className="welcome-card">
+          <div className="welcome-card-top"><span className="welcome-avatar">{initials(user?.name||'User')}</span><div><small>SIGNED IN AS</small><h2>{user?.name}</h2><p>{user?.email}</p></div><i>Active</i></div>
+          <div className="welcome-details">
+            <div><span><Building2/></span><small>COMPANY</small><strong>{client?.name}</strong></div>
+            <div><span><BriefcaseBusiness/></span><small>ROLE</small><strong>{user?.role}</strong></div>
+            <div><span><MapPin/></span><small>DEFAULT STORE</small><strong>{site?.name}</strong></div>
+            <div><span><Clock3/></span><small>SESSION</small><strong>Live & connected</strong></div>
+          </div>
+          <button className="enter-workspace" onClick={onEnter}><span>Enter {site?.name}</span><ChevronRight/></button>
+          <div className="welcome-user-switch"><label>Testing as another user?</label><select value={user?.id||''} onChange={e=>{const selected=users.find(u=>u.id===Number(e.target.value));if(selected)onChooseUser(selected)}}>{users.map(u=><option key={u.id} value={u.id}>{u.name} · {locations.find(l=>l.id===u.default_location_id)?.name}</option>)}</select></div>
+        </article>
+      </section>
+      <footer className="welcome-footer"><span>© 2026 DataWiz Consulting</span><span>Secure · Connected · Ready</span></footer>
+    </main>
+  );
+}
+
 function Module({
   module,
   data,
