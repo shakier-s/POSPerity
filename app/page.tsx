@@ -834,10 +834,8 @@ function SplashScreen({ onContinue }: { onContinue: () => void }) {
         </div>
       </section>
       <footer>
-        <small>BROUGHT TO YOU BY</small>
-        <strong>
-          <span>Data</span>Wiz Consulting
-        </strong>
+        <small>POWERED BY</small>
+        <strong><span>Bizno</span>Tech</strong>
       </footer>
     </main>
   );
@@ -876,10 +874,8 @@ function LoginScreen({
           </p>
         </div>
         <div className="login-datawiz">
-          <small>BROUGHT TO YOU BY</small>
-          <strong>
-            <span>Data</span>Wiz Consulting
-          </strong>
+          <small>POWERED BY</small>
+          <strong><span>Bizno</span>Tech</strong>
         </div>
       </section>
       <section className="login-form-panel">
@@ -966,9 +962,7 @@ function WelcomeScreen({
         </div>
         <div className="datawiz-mini">
           <small>POWERED BY</small>
-          <strong>
-            <span>Data</span>Wiz Consulting
-          </strong>
+          <strong><span>Bizno</span>Tech</strong>
         </div>
       </header>
       <section className="welcome-shell">
@@ -1065,7 +1059,7 @@ function WelcomeScreen({
         </article>
       </section>
       <footer className="welcome-footer">
-        <span>© 2026 DataWiz Consulting</span>
+        <span>© 2026 BiznoTech</span>
         <span>Secure · Connected · Ready</span>
       </footer>
     </main>

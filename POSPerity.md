@@ -1,13 +1,13 @@
 # POSPerity
 
-POSPerity is a responsive, multi-client point-of-sale portal developed for DataWiz Consulting. It combines store checkout, client-level products, location inventory, customer management, users and roles, purchase orders, central warehouse distribution, held sales, barcode lookup, and reporting in one application.
+POSPerity is a responsive, multi-client point-of-sale portal powered by BiznoTech. It combines store checkout, client-level products, location inventory, customer management, users and roles, purchase orders, central warehouse distribution, held sales, barcode lookup, and reporting in one application.
 
 This document contains the functional and technical information needed to recreate the current application.
 
 ## Product identity
 
 - Product name: **POSPerity**
-- Provider: **DataWiz Consulting**
+- Provider: **BiznoTech**
 - Product statement: **Smarter selling. Connected inventory. Prosperous business.**
 - Visual direction: charcoal and light grey surfaces with a warm orange accent
 - Production URL: `https://posperity.yushaaallow19.chatgpt.site`
@@ -239,7 +239,7 @@ Cashiers can see only **Sell** and **Customers**. Store managers see Sell, Inven
 ## Application entry and sessions
 
 1. Display the animated POSPerity splash screen.
-2. Show “Brought to you by DataWiz Consulting.”
+2. Show “Powered by BiznoTech.”
 3. Display the selected user's welcome card with company, email, role, default store and session state.
 4. Enter the workspace at the user's default store.
 5. Show a **Log off** action for every role.
@@ -414,4 +414,4 @@ Before accepting real payments or external client access:
 
 ## License and ownership
 
-Add the appropriate license and copyright terms for DataWiz Consulting before distributing or open-sourcing this repository.
+Add the appropriate license and copyright terms for BiznoTech before distributing or open-sourcing this repository.
