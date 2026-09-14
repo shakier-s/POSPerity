@@ -198,6 +198,25 @@ A held sale stores the client, original store, cashier, optional customer, refer
 
 Stores the client, acting user, action, affected entity and record ID, a readable summary, and timestamp. Client administrators and store managers can open the Adjustment Log from the Reports page; results are always restricted to the active client.
 
+## Reports and adjustment history
+
+The **Reports** navigation item opens a reporting hub with two linked report surfaces:
+
+- **Sales performance** shows posted revenue, transaction count, average sale, active-store count, and recent sale details.
+- **Adjustment log** shows the 250 most recent tenant events with date and time, acting user, action, affected area and record, and a readable description.
+
+The Adjustment Log is visible to client administrators and store managers. Cashiers cannot access Reports. The API enforces this access independently of the navigation interface. Log results are client-scoped; store managers can review activity for their company but cannot access another client's records.
+
+New log entries are written for:
+
+- client administrator create, update, and delete operations;
+- customer, user, and purchase-order creation;
+- stock-transfer dispatch and receipt, including the resulting inventory movement;
+- sales placed on hold or released; and
+- completed card and cash sales, including store inventory deductions.
+
+Adjustment records are audit history and are not editable through the application.
+
 ## Permission model
 
 Authorization is enforced in the API as well as the interface.
@@ -207,7 +226,7 @@ Authorization is enforced in the API as well as the interface.
 | Sell and take payment | All permitted stores | Assigned store | Assigned store |
 | Customers | Client-wide | Client-wide | Client-wide |
 | Store inventory | All stores and warehouse | Assigned store and warehouse context | Product availability for assigned store |
-| Reports | Client-wide | Assigned store | Not shown |
+| Reports | Client-wide sales and adjustment log | Assigned-store sales and client adjustment log | Not shown |
 | Purchase orders | Any permitted destination | Assigned store only | No |
 | Transfers | Client-wide | Requests/receipts for assigned store | No |
 | Users | All client users and roles | Cashiers for assigned store | No |
@@ -306,7 +325,7 @@ All workflows use `app/api/pos/route.ts`.
 
 ### Read
 
-`GET /api/pos?clientId=<id>&userId=<id>` returns role-scoped clients, locations, inventory products, customers, users, purchase orders, transfers, sales, held sales and held-sale items.
+`GET /api/pos?clientId=<id>&userId=<id>` returns role-scoped clients, locations, inventory products, customers, users, purchase orders, transfers, sales, held sales, held-sale items, and adjustment logs. Adjustment logs are returned only to administrators and store managers.
 
 ### Write actions
 
@@ -320,6 +339,7 @@ Send JSON to `POST /api/pos` with an `action` field:
 - `purchaseOrder`
 - `transfer`
 - `receiveTransfer`
+- `adminCrud` with an allowed tenant entity and `create`, `update`, or `delete` operation
 
 Every write includes the acting `userId` and relevant `clientId`. The server loads the user, checks active status, validates tenant membership and role, then validates the requested store and records.
 
