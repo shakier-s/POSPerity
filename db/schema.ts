@@ -131,6 +131,35 @@ export const saleItems = sqliteTable('sale_items', {
   unitPrice: real('unit_price').notNull(),
 });
 
+export const heldSales = sqliteTable('held_sales', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clientId: integer('client_id')
+    .notNull()
+    .references(() => clients.id),
+  locationId: integer('location_id')
+    .notNull()
+    .references(() => locations.id),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id),
+  customerId: integer('customer_id').references(() => customers.id),
+  reference: text('reference').notNull(),
+  total: real('total').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
+export const heldSaleItems = sqliteTable('held_sale_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  heldSaleId: integer('held_sale_id')
+    .notNull()
+    .references(() => heldSales.id),
+  productId: integer('product_id')
+    .notNull()
+    .references(() => products.id),
+  quantity: integer('quantity').notNull(),
+  unitPrice: real('unit_price').notNull(),
+});
+
 export const purchaseOrders = sqliteTable('purchase_orders', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   clientId: integer('client_id')

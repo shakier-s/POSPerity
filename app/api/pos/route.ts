@@ -19,7 +19,9 @@ export async function GET(request: Request) {
             default_location_id: number;
             role: string;
             status: string;
-          }>('SELECT id,client_id,default_location_id,role,status FROM users WHERE id=?')
+          }>(
+            'SELECT id,client_id,default_location_id,role,status FROM users WHERE id=?',
+          )
           .bind(actingUserId)
           .first()
       : null;
@@ -34,6 +36,8 @@ export async function GET(request: Request) {
     const [
       clients,
       locations,
+      heldSales,
+      heldSaleItems,
       products,
       customers,
       users,
@@ -53,6 +57,38 @@ export async function GET(request: Request) {
               : 'SELECT * FROM locations WHERE client_id=? AND id=? ORDER BY name',
         )
         .bind(...(isAdministrator ? [clientId] : [clientId, scopedLocationId]))
+        .all(),
+      db
+        .prepare(
+          isAdministrator
+            ? 'SELECT h.*,l.name AS location_name,u.name AS cashier_name,c.name AS customer_name FROM held_sales h JOIN locations l ON l.id=h.location_id JOIN users u ON u.id=h.user_id LEFT JOIN customers c ON c.id=h.customer_id WHERE h.client_id=? ORDER BY h.id DESC'
+            : isManager
+              ? 'SELECT h.*,l.name AS location_name,u.name AS cashier_name,c.name AS customer_name FROM held_sales h JOIN locations l ON l.id=h.location_id JOIN users u ON u.id=h.user_id LEFT JOIN customers c ON c.id=h.customer_id WHERE h.client_id=? AND h.location_id=? ORDER BY h.id DESC'
+              : 'SELECT h.*,l.name AS location_name,u.name AS cashier_name,c.name AS customer_name FROM held_sales h JOIN locations l ON l.id=h.location_id JOIN users u ON u.id=h.user_id LEFT JOIN customers c ON c.id=h.customer_id WHERE h.client_id=? AND h.location_id=? AND h.user_id=? ORDER BY h.id DESC',
+        )
+        .bind(
+          ...(isAdministrator
+            ? [clientId]
+            : isManager
+              ? [clientId, scopedLocationId]
+              : [clientId, scopedLocationId, actingUserId]),
+        )
+        .all(),
+      db
+        .prepare(
+          isAdministrator
+            ? 'SELECT hi.* FROM held_sale_items hi JOIN held_sales h ON h.id=hi.held_sale_id WHERE h.client_id=?'
+            : isManager
+              ? 'SELECT hi.* FROM held_sale_items hi JOIN held_sales h ON h.id=hi.held_sale_id WHERE h.client_id=? AND h.location_id=?'
+              : 'SELECT hi.* FROM held_sale_items hi JOIN held_sales h ON h.id=hi.held_sale_id WHERE h.client_id=? AND h.location_id=? AND h.user_id=?',
+        )
+        .bind(
+          ...(isAdministrator
+            ? [clientId]
+            : isManager
+              ? [clientId, scopedLocationId]
+              : [clientId, scopedLocationId, actingUserId]),
+        )
         .all(),
       db
         .prepare(
@@ -78,7 +114,13 @@ export async function GET(request: Request) {
               ? 'SELECT * FROM users WHERE client_id=? AND default_location_id=? ORDER BY name'
               : 'SELECT * FROM users WHERE client_id=? AND id=?',
         )
-        .bind(...(isAdministrator ? [clientId] : isManager ? [clientId, scopedLocationId] : [clientId, actingUserId]))
+        .bind(
+          ...(isAdministrator
+            ? [clientId]
+            : isManager
+              ? [clientId, scopedLocationId]
+              : [clientId, actingUserId]),
+        )
         .all(),
       db
         .prepare(
@@ -98,7 +140,11 @@ export async function GET(request: Request) {
               ? 'SELECT t.*,f.name AS origin,d.name AS destination,p.name AS product_name FROM stock_transfers t JOIN locations f ON f.id=t.from_location_id JOIN locations d ON d.id=t.to_location_id JOIN products p ON p.id=t.product_id WHERE t.client_id=? AND (t.from_location_id=? OR t.to_location_id=?) ORDER BY t.id DESC'
               : 'SELECT t.*,f.name AS origin,d.name AS destination,p.name AS product_name FROM stock_transfers t JOIN locations f ON f.id=t.from_location_id JOIN locations d ON d.id=t.to_location_id JOIN products p ON p.id=t.product_id WHERE t.client_id=? AND 0',
         )
-        .bind(...(isManager ? [clientId, scopedLocationId, scopedLocationId] : [clientId]))
+        .bind(
+          ...(isManager
+            ? [clientId, scopedLocationId, scopedLocationId]
+            : [clientId]),
+        )
         .all(),
       db
         .prepare(
@@ -118,6 +164,8 @@ export async function GET(request: Request) {
       purchaseOrders: purchaseOrders.results,
       transfers: transfers.results,
       sales: sales.results,
+      heldSales: heldSales.results,
+      heldSaleItems: heldSaleItems.results,
     });
   } catch (error) {
     return bad(
@@ -155,7 +203,7 @@ export async function POST(request: Request) {
     const normalizedRole = actor.role.toLowerCase();
     const isAdministrator = normalizedRole.includes('administrator');
     const isManager = normalizedRole.includes('manager');
-    const cashierActions = new Set(['sale', 'customer']);
+    const cashierActions = new Set(['sale', 'customer', 'hold', 'deleteHold']);
     const managerActions = new Set([
       ...cashierActions,
       'purchaseOrder',
@@ -208,14 +256,7 @@ export async function POST(request: Request) {
         .prepare(
           'INSERT INTO users (client_id,default_location_id,name,email,role,status) VALUES (?,?,?,?,?,?)',
         )
-        .bind(
-          clientId,
-          locationId,
-          name,
-          email,
-          requestedRole,
-          'Active',
-        )
+        .bind(clientId, locationId, name, email, requestedRole, 'Active')
         .run();
       return json({ ok: true, id: result.meta.last_row_id }, 201);
     }
@@ -227,7 +268,10 @@ export async function POST(request: Request) {
       if (!clientId || !locationId || !supplier || total < 0)
         return bad('Supplier, destination and valid total are required');
       if (isManager && locationId !== actor.default_location_id)
-        return bad('Store managers may only order for their assigned store', 403);
+        return bad(
+          'Store managers may only order for their assigned store',
+          403,
+        );
       const result = await db
         .prepare(
           'INSERT INTO purchase_orders (client_id,destination_location_id,supplier,status,total,created_at) VALUES (?,?,?,?,?,?)',
@@ -321,6 +365,90 @@ export async function POST(request: Request) {
       ]);
       return json({ ok: true });
     }
+    if (action === 'hold') {
+      const clientId = Number(body.clientId),
+        locationId = Number(body.locationId),
+        customerId = body.customerId ? Number(body.customerId) : null,
+        reference =
+          String(body.reference || '').trim() || `Held by ${actor.role}`,
+        items = Array.isArray(body.items)
+          ? (body.items as { productId: number; quantity: number }[])
+          : [];
+      if (!clientId || !locationId || !items.length)
+        return bad('A store and at least one item are required');
+      if (!isAdministrator && locationId !== actor.default_location_id)
+        return bad('You can only hold sales at your assigned store', 403);
+      const ids = items.map((item) => Number(item.productId));
+      const { results: rows } = await db
+        .prepare<{ id: number; price: number }>(
+          `SELECT id,price FROM products WHERE client_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+        )
+        .bind(clientId, ...ids)
+        .all();
+      if (
+        rows.length !== ids.length ||
+        items.some((item) => item.quantity <= 0)
+      )
+        return bad('One or more held-sale items are invalid');
+      const total = items.reduce(
+        (sum, item) =>
+          sum +
+          (rows.find((row) => row.id === Number(item.productId))?.price || 0) *
+            item.quantity,
+        0,
+      );
+      const held = await db
+        .prepare(
+          'INSERT INTO held_sales (client_id,location_id,user_id,customer_id,reference,total,created_at) VALUES (?,?,?,?,?,?,?)',
+        )
+        .bind(
+          clientId,
+          locationId,
+          actingUserId,
+          customerId,
+          reference,
+          total,
+          now,
+        )
+        .run();
+      const heldSaleId = Number(held.meta.last_row_id);
+      await db.batch(
+        items.map((item) =>
+          db
+            .prepare(
+              'INSERT INTO held_sale_items (held_sale_id,product_id,quantity,unit_price) VALUES (?,?,?,?)',
+            )
+            .bind(
+              heldSaleId,
+              item.productId,
+              item.quantity,
+              rows.find((row) => row.id === Number(item.productId))!.price,
+            ),
+        ),
+      );
+      return json({ ok: true, id: heldSaleId, reference, total }, 201);
+    }
+    if (action === 'deleteHold') {
+      const id = Number(body.id);
+      const hold = await db
+        .prepare<{ client_id: number; location_id: number; user_id: number }>(
+          'SELECT client_id,location_id,user_id FROM held_sales WHERE id=?',
+        )
+        .bind(id)
+        .first();
+      if (!hold || hold.client_id !== actor.client_id)
+        return bad('Held sale not found', 404);
+      if (
+        (!isAdministrator && hold.location_id !== actor.default_location_id) ||
+        (!isAdministrator && !isManager && hold.user_id !== actor.id)
+      )
+        return bad('You cannot release this held sale', 403);
+      await db.batch([
+        db.prepare('DELETE FROM held_sale_items WHERE held_sale_id=?').bind(id),
+        db.prepare('DELETE FROM held_sales WHERE id=?').bind(id),
+      ]);
+      return json({ ok: true });
+    }
     if (action === 'sale') {
       const clientId = Number(body.clientId),
         locationId = Number(body.locationId),
@@ -329,13 +457,36 @@ export async function POST(request: Request) {
         paymentMethod = String(body.paymentMethod || 'Card'),
         cashReceived =
           body.cashReceived == null ? null : Number(body.cashReceived),
+        holdId = body.holdId ? Number(body.holdId) : null,
         items = Array.isArray(body.items)
           ? (body.items as { productId: number; quantity: number }[])
           : [];
       if (!clientId || !locationId || !userId || !items.length)
         return bad('Sale location, cashier and items are required');
-      if (!isAdministrator && !isManager && locationId !== actor.default_location_id)
-        return bad('Cashiers can only sell from their assigned default store', 403);
+      if (
+        !isAdministrator &&
+        !isManager &&
+        locationId !== actor.default_location_id
+      )
+        return bad(
+          'Cashiers can only sell from their assigned default store',
+          403,
+        );
+      if (holdId) {
+        const held = await db
+          .prepare<{ client_id: number; location_id: number; user_id: number }>(
+            'SELECT client_id,location_id,user_id FROM held_sales WHERE id=?',
+          )
+          .bind(holdId)
+          .first();
+        if (
+          !held ||
+          held.client_id !== clientId ||
+          held.location_id !== locationId ||
+          (!isAdministrator && !isManager && held.user_id !== actor.id)
+        )
+          return bad('The held sale is not available to this user', 403);
+      }
       const ids = items.map((i) => Number(i.productId));
       const { results: rows } = await db
         .prepare<{ id: number; price: number; stock: number }>(
@@ -395,6 +546,14 @@ export async function POST(request: Request) {
               'UPDATE inventory SET quantity=quantity-? WHERE client_id=? AND location_id=? AND product_id=?',
             )
             .bind(item.quantity, clientId, locationId, item.productId),
+        );
+      }
+      if (holdId) {
+        statements.push(
+          db
+            .prepare('DELETE FROM held_sale_items WHERE held_sale_id=?')
+            .bind(holdId),
+          db.prepare('DELETE FROM held_sales WHERE id=?').bind(holdId),
         );
       }
       await db.batch(statements);

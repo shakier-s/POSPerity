@@ -89,6 +89,25 @@ type Sale = {
   cashier_name: string;
   customer_name?: string;
 };
+type HeldSale = {
+  id: number;
+  location_id: number;
+  user_id: number;
+  customer_id?: number;
+  reference: string;
+  total: number;
+  created_at: string;
+  location_name: string;
+  cashier_name: string;
+  customer_name?: string;
+};
+type HeldSaleItem = {
+  id: number;
+  held_sale_id: number;
+  product_id: number;
+  quantity: number;
+  unit_price: number;
+};
 type Data = {
   clients: Client[];
   locations: Location[];
@@ -98,6 +117,8 @@ type Data = {
   purchaseOrders: PO[];
   transfers: Transfer[];
   sales: Sale[];
+  heldSales: HeldSale[];
+  heldSaleItems: HeldSaleItem[];
 };
 type CartLine = Product & { quantity: number };
 const navItems = [
@@ -131,6 +152,7 @@ export default function Home() {
     [query, setQuery] = useState(''),
     [cart, setCart] = useState<CartLine[]>([]),
     [customerId, setCustomerId] = useState<number>(),
+    [activeHoldId, setActiveHoldId] = useState<number>(),
     [menuOpen, setMenuOpen] = useState(false),
     [clientMenu, setClientMenu] = useState(false),
     [userMenu, setUserMenu] = useState(false),
@@ -645,11 +667,14 @@ export default function Home() {
                 <strong>{money(subtotal)}</strong>
               </button>
               <div className="payment-shortcuts">
-                <button onClick={() => setNotice('Order held on this device')}>
+                <button
+                  disabled={!cart.length}
+                  onClick={() => setDialog('hold')}
+                >
                   <WalletCards /> Hold
                 </button>
-                <button>
-                  <ReceiptText /> Discount
+                <button onClick={() => setDialog('heldSales')}>
+                  <ReceiptText /> Held ({data.heldSales.length})
                 </button>
                 <button onClick={() => setDialog('cash')}>
                   <BadgeDollarSign /> Cash
@@ -690,9 +715,16 @@ export default function Home() {
             if (payload.action === 'sale') {
               setCart([]);
               setCustomerId(undefined);
+              setActiveHoldId(undefined);
               setNotice(
                 `Sale posted · ${result.receipt}${result.change != null ? ` · Change ${money(result.change)}` : ''}`,
               );
+            }
+            if (payload.action === 'hold') {
+              setCart([]);
+              setCustomerId(undefined);
+              setActiveHoldId(undefined);
+              setNotice(`Sale held · ${result.reference}`);
             }
           }}
           onSelectCustomer={(id) => {
@@ -701,6 +733,31 @@ export default function Home() {
           }}
           cart={cart}
           customerId={customerId}
+          activeHoldId={activeHoldId}
+          onRecallHold={(hold) => {
+            const restored = data.heldSaleItems
+              .filter((item) => item.held_sale_id === hold.id)
+              .map((item) => {
+                const product = siteProducts.find(
+                  (candidate) => candidate.id === item.product_id,
+                );
+                return product ? { ...product, quantity: item.quantity } : null;
+              })
+              .filter((item): item is CartLine => item !== null);
+            setCart(restored);
+            setCustomerId(hold.customer_id);
+            setActiveHoldId(hold.id);
+            setDialog(null);
+            setNotice(`Recalled ${hold.reference}`);
+          }}
+          onDeleteHold={async (id) => {
+            await post({ action: 'deleteHold', id, clientId, userId });
+            if (activeHoldId === id) {
+              setActiveHoldId(undefined);
+              setCart([]);
+            }
+            setNotice('Held sale released');
+          }}
         />
       )}
     </main>
@@ -1278,6 +1335,9 @@ function Dialog({
   onSelectCustomer,
   cart,
   customerId,
+  activeHoldId,
+  onRecallHold,
+  onDeleteHold,
 }: {
   kind: string;
   busy: boolean;
@@ -1293,6 +1353,9 @@ function Dialog({
   onSelectCustomer: (id: number | undefined) => void;
   cart: CartLine[];
   customerId?: number;
+  activeHoldId?: number;
+  onRecallHold: (hold: HeldSale) => void;
+  onDeleteHold: (id: number) => Promise<void>;
 }) {
   const stores = locations.filter((l) => l.type === 'store'),
     actor = data.users.find((candidate) => candidate.id === userId),
@@ -1317,6 +1380,102 @@ function Dialog({
         </div>
       </Modal>
     );
+  if (kind === 'heldSales')
+    return (
+      <Modal title="Held sales" onClose={onClose}>
+        <div className="held-sales-list">
+          {data.heldSales.length ? (
+            data.heldSales.map((hold) => {
+              const itemCount = data.heldSaleItems
+                .filter((item) => item.held_sale_id === hold.id)
+                .reduce((sum, item) => sum + item.quantity, 0);
+              return (
+                <article key={hold.id}>
+                  <div className="held-sale-icon">
+                    <WalletCards />
+                  </div>
+                  <div>
+                    <strong>{hold.reference}</strong>
+                    <small>
+                      {hold.cashier_name} · {itemCount} items ·{' '}
+                      {hold.customer_name || 'Walk-in'}
+                    </small>
+                    <span>
+                      {hold.location_name} ·{' '}
+                      {new Date(hold.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <b>{money(hold.total)}</b>
+                  <div className="held-actions">
+                    <button onClick={() => onRecallHold(hold)}>Recall</button>
+                    <button
+                      className="held-delete"
+                      disabled={busy}
+                      onClick={() => void onDeleteHold(hold.id)}
+                    >
+                      <Trash2 />
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          ) : (
+            <div className="empty-held">
+              <WalletCards />
+              <strong>No held sales</strong>
+              <span>Held orders will appear here until paid or released.</span>
+            </div>
+          )}
+        </div>
+      </Modal>
+    );
+  if (kind === 'hold')
+    return (
+      <Modal title="Hold this sale" onClose={onClose}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget);
+            void onSubmit({
+              action: 'hold',
+              clientId,
+              locationId: siteId,
+              customerId,
+              reference: String(f.get('reference') || ''),
+              items: cart.map((item) => ({
+                productId: item.id,
+                quantity: item.quantity,
+              })),
+            });
+          }}
+        >
+          <div className="hold-summary">
+            <WalletCards />
+            <div>
+              <small>ORDER TO HOLD</small>
+              <strong>
+                {cart.reduce((sum, item) => sum + item.quantity, 0)} items ·{' '}
+                {money(total)}
+              </strong>
+              <span>Inventory will not be deducted until payment.</span>
+            </div>
+          </div>
+          <label>
+            Reference or customer name
+            <input
+              name="reference"
+              placeholder="e.g. Table 4 or Naledi"
+              autoFocus
+              required
+            />
+          </label>
+          <button className="dialog-primary" disabled={busy}>
+            <WalletCards />
+            {busy ? 'Holding…' : 'Save held sale'}
+          </button>
+        </form>
+      </Modal>
+    );
   if (kind === 'payment' || kind === 'cash')
     return (
       <Modal title="Complete sale" onClose={onClose}>
@@ -1331,6 +1490,7 @@ function Dialog({
               locationId: siteId,
               userId,
               customerId,
+              holdId: activeHoldId,
               paymentMethod: method,
               cashReceived:
                 method === 'Cash' ? Number(f.get('cashReceived')) : null,
