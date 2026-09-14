@@ -12,6 +12,8 @@ import {
   Clock3,
   CreditCard,
   LayoutGrid,
+  LogIn,
+  LogOut,
   MapPin,
   Menu,
   Minus,
@@ -118,9 +120,9 @@ const initials = (n: string) =>
     .toUpperCase();
 export default function Home() {
   const [data, setData] = useState<Data | null>(null),
-    [entryStage, setEntryStage] = useState<'splash' | 'welcome' | 'app'>(
-      'splash',
-    ),
+    [entryStage, setEntryStage] = useState<
+      'splash' | 'login' | 'welcome' | 'app'
+    >('splash'),
     [clientId, setClientId] = useState(1),
     [siteId, setSiteId] = useState(0),
     [userId, setUserId] = useState(0),
@@ -191,7 +193,8 @@ export default function Home() {
     client = clients.find((c) => c.id === clientId),
     site = stores.find((s) => s.id === siteId),
     user = data?.users.find((u) => u.id === userId),
-    isAdministrator = user?.role.toLowerCase().includes('administrator') ?? false,
+    isAdministrator =
+      user?.role.toLowerCase().includes('administrator') ?? false,
     isManager = user?.role.toLowerCase().includes('manager') ?? false,
     isCashier = user?.role.toLowerCase() === 'cashier',
     visibleNav = isCashier
@@ -240,6 +243,20 @@ export default function Home() {
         <small>{notice || 'Connecting to live records'}</small>
       </main>
     );
+  if (entryStage === 'login')
+    return (
+      <LoginScreen
+        client={client}
+        user={user}
+        users={data.users}
+        locations={locations}
+        onChooseUser={(selected) => {
+          setUserId(selected.id);
+          setSiteId(selected.default_location_id);
+        }}
+        onSignIn={() => setEntryStage('welcome')}
+      />
+    );
   if (entryStage === 'welcome')
     return (
       <WelcomeScreen
@@ -272,36 +289,38 @@ export default function Home() {
             POS<span>Perity</span>
           </span>
         </div>
-        {isAdministrator && <div className="client-switcher">
-          <button onClick={() => setClientMenu(!clientMenu)}>
-            <span className="client-logo">{client?.code}</span>
-            <span>
-              <small>CLIENT PORTAL</small>
-              <strong>{client?.name}</strong>
-            </span>
-            <ChevronDown />
-          </button>
-          {clientMenu && (
-            <div className="client-menu">
-              {clients.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => {
-                    setClientId(c.id);
-                    setCart([]);
-                    setClientMenu(false);
-                  }}
-                >
-                  <span>{c.code}</span>
-                  <div>
-                    <strong>{c.name}</strong>
-                    <small>Open live workspace</small>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>}
+        {isAdministrator && (
+          <div className="client-switcher">
+            <button onClick={() => setClientMenu(!clientMenu)}>
+              <span className="client-logo">{client?.code}</span>
+              <span>
+                <small>CLIENT PORTAL</small>
+                <strong>{client?.name}</strong>
+              </span>
+              <ChevronDown />
+            </button>
+            {clientMenu && (
+              <div className="client-menu">
+                {clients.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      setClientId(c.id);
+                      setCart([]);
+                      setClientMenu(false);
+                    }}
+                  >
+                    <span>{c.code}</span>
+                    <div>
+                      <strong>{c.name}</strong>
+                      <small>Open live workspace</small>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <nav>
           {visibleNav.map(([label, Icon]) => (
             <button
@@ -341,33 +360,63 @@ export default function Home() {
             </button>
             {userMenu && (
               <div className="user-session-menu">
-                <small>{isAdministrator ? 'ADMINISTRATOR SESSION' : 'CASHIER SESSION'}</small>
+                <small>
+                  {isAdministrator
+                    ? 'ADMINISTRATOR SESSION'
+                    : 'CASHIER SESSION'}
+                </small>
                 <button onClick={() => setEntryStage('welcome')}>
-                  <span><Sparkles /></span>
-                  <div><strong>Welcome screen</strong><small>View your profile details</small></div>
+                  <span>
+                    <Sparkles />
+                  </span>
+                  <div>
+                    <strong>Welcome screen</strong>
+                    <small>View your profile details</small>
+                  </div>
                 </button>
-                {isAdministrator && data.users.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      setUserId(u.id);
-                      setSiteId(u.default_location_id);
-                      setUserMenu(false);
-                      setCart([]);
-                    }}
-                  >
-                    <span>{initials(u.name)}</span>
-                    <div>
-                      <strong>{u.name}</strong>
-                      <small>
-                        {
-                          locations.find((l) => l.id === u.default_location_id)
-                            ?.name
-                        }
-                      </small>
-                    </div>
-                  </button>
-                ))}
+                <button
+                  className="logoff-button"
+                  onClick={() => {
+                    setCart([]);
+                    setCustomerId(undefined);
+                    setDialog(null);
+                    setUserMenu(false);
+                    setNotice('');
+                    void load(clientId, 0).then(() => setEntryStage('login'));
+                  }}
+                >
+                  <span>
+                    <LogOut />
+                  </span>
+                  <div>
+                    <strong>Log off</strong>
+                    <small>Close this store session</small>
+                  </div>
+                </button>
+                {isAdministrator &&
+                  data.users.map((u) => (
+                    <button
+                      key={u.id}
+                      onClick={() => {
+                        setUserId(u.id);
+                        setSiteId(u.default_location_id);
+                        setUserMenu(false);
+                        setCart([]);
+                      }}
+                    >
+                      <span>{initials(u.name)}</span>
+                      <div>
+                        <strong>{u.name}</strong>
+                        <small>
+                          {
+                            locations.find(
+                              (l) => l.id === u.default_location_id,
+                            )?.name
+                          }
+                        </small>
+                      </div>
+                    </button>
+                  ))}
               </div>
             )}
           </div>
@@ -385,7 +434,9 @@ export default function Home() {
             </div>
           </div>
           <div className="top-actions">
-            <label className={`site-select ${!isAdministrator ? 'site-locked' : ''}`}>
+            <label
+              className={`site-select ${!isAdministrator ? 'site-locked' : ''}`}
+            >
               <MapPin />
               <select
                 value={siteId}
@@ -429,7 +480,12 @@ export default function Home() {
                 <div>
                   <strong>{client?.name}</strong>
                   <small>
-                      {isCashier ? 'Cashier access' : isManager ? 'Store manager access' : 'Administrator access'} · Selling from {site?.name} · Completed sales post live
+                    {isCashier
+                      ? 'Cashier access'
+                      : isManager
+                        ? 'Store manager access'
+                        : 'Administrator access'}{' '}
+                    · Selling from {site?.name} · Completed sales post live
                   </small>
                 </div>
               </div>
@@ -656,47 +712,252 @@ function SplashScreen({ onContinue }: { onContinue: () => void }) {
       <div className="splash-glow splash-glow-one" />
       <div className="splash-glow splash-glow-two" />
       <section className="splash-content">
-        <div className="splash-logo"><BadgeDollarSign /></div>
-        <div className="splash-name">POS<span>Perity</span></div>
+        <div className="splash-logo">
+          <BadgeDollarSign />
+        </div>
+        <div className="splash-name">
+          POS<span>Perity</span>
+        </div>
         <p>Smarter selling. Connected inventory. Prosperous business.</p>
-        <div className="splash-loader"><i /></div>
+        <div className="splash-loader">
+          <i />
+        </div>
       </section>
       <footer>
         <small>BROUGHT TO YOU BY</small>
-        <strong><span>Data</span>Wiz Consulting</strong>
+        <strong>
+          <span>Data</span>Wiz Consulting
+        </strong>
       </footer>
     </main>
   );
 }
 
-function WelcomeScreen({client,user,site,users,locations,onChooseUser,onEnter}:{client?:Client;user?:User;site?:Location;users:User[];locations:Location[];onChooseUser:(user:User)=>void;onEnter:()=>void}) {
+function LoginScreen({
+  client,
+  user,
+  users,
+  locations,
+  onChooseUser,
+  onSignIn,
+}: {
+  client?: Client;
+  user?: User;
+  users: User[];
+  locations: Location[];
+  onChooseUser: (user: User) => void;
+  onSignIn: () => void;
+}) {
+  return (
+    <main className="login-screen">
+      <section className="login-brand-panel">
+        <div className="welcome-brand">
+          <span>
+            <BadgeDollarSign />
+          </span>
+          POS<b>Perity</b>
+        </div>
+        <div className="login-brand-copy">
+          <small>SMARTER BUSINESS STARTS HERE</small>
+          <h1>Welcome to your connected retail workspace.</h1>
+          <p>
+            Sales, stock, customers and purchasing—working together across every
+            location.
+          </p>
+        </div>
+        <div className="login-datawiz">
+          <small>BROUGHT TO YOU BY</small>
+          <strong>
+            <span>Data</span>Wiz Consulting
+          </strong>
+        </div>
+      </section>
+      <section className="login-form-panel">
+        <div className="signed-out-badge">
+          <ShieldCheck /> Session securely closed
+        </div>
+        <div className="login-form-card">
+          <small>SIGN IN TO CONTINUE</small>
+          <h2>Open POSPerity</h2>
+          <p>
+            Select your authorized profile for <strong>{client?.name}</strong>.
+          </p>
+          <label>
+            User profile
+            <select
+              value={user?.id || ''}
+              onChange={(e) => {
+                const selected = users.find(
+                  (u) => u.id === Number(e.target.value),
+                );
+                if (selected) onChooseUser(selected);
+              }}
+            >
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} · {u.role}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="login-profile-preview">
+            <span>{initials(user?.name || 'User')}</span>
+            <div>
+              <strong>{user?.name}</strong>
+              <small>
+                {
+                  locations.find((l) => l.id === user?.default_location_id)
+                    ?.name
+                }{' '}
+                · {user?.role}
+              </small>
+            </div>
+          </div>
+          <button onClick={onSignIn}>
+            <span>Sign in</span>
+            <LogIn />
+          </button>
+          <footer>
+            <ShieldCheck /> Authorized company users only
+          </footer>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function WelcomeScreen({
+  client,
+  user,
+  site,
+  users,
+  locations,
+  onChooseUser,
+  onEnter,
+}: {
+  client?: Client;
+  user?: User;
+  site?: Location;
+  users: User[];
+  locations: Location[];
+  onChooseUser: (user: User) => void;
+  onEnter: () => void;
+}) {
   return (
     <main className="welcome-screen">
-      <div className="welcome-orb welcome-orb-one"/><div className="welcome-orb welcome-orb-two"/>
+      <div className="welcome-orb welcome-orb-one" />
+      <div className="welcome-orb welcome-orb-two" />
       <header className="welcome-header">
-        <div className="welcome-brand"><span><BadgeDollarSign/></span>POS<b>Perity</b></div>
-        <div className="datawiz-mini"><small>POWERED BY</small><strong><span>Data</span>Wiz Consulting</strong></div>
+        <div className="welcome-brand">
+          <span>
+            <BadgeDollarSign />
+          </span>
+          POS<b>Perity</b>
+        </div>
+        <div className="datawiz-mini">
+          <small>POWERED BY</small>
+          <strong>
+            <span>Data</span>Wiz Consulting
+          </strong>
+        </div>
       </header>
       <section className="welcome-shell">
         <div className="welcome-copy">
-          <div className="welcome-kicker"><Sparkles/> Your workspace is ready</div>
-          <h1>Welcome back,<br/><span>{user?.name.split(' ')[0]}</span>.</h1>
-          <p>You’re signed in to <strong>{client?.name}</strong>. Everything you need to run today’s sales, stock and customers is ready.</p>
-          <div className="welcome-trust"><span><ShieldCheck/></span><div><strong>Secure company workspace</strong><small>Your access and activity stay within {client?.name}.</small></div></div>
+          <div className="welcome-kicker">
+            <Sparkles /> Your workspace is ready
+          </div>
+          <h1>
+            Welcome back,
+            <br />
+            <span>{user?.name.split(' ')[0]}</span>.
+          </h1>
+          <p>
+            You’re signed in to <strong>{client?.name}</strong>. Everything you
+            need to run today’s sales, stock and customers is ready.
+          </p>
+          <div className="welcome-trust">
+            <span>
+              <ShieldCheck />
+            </span>
+            <div>
+              <strong>Secure company workspace</strong>
+              <small>
+                Your access and activity stay within {client?.name}.
+              </small>
+            </div>
+          </div>
         </div>
         <article className="welcome-card">
-          <div className="welcome-card-top"><span className="welcome-avatar">{initials(user?.name||'User')}</span><div><small>SIGNED IN AS</small><h2>{user?.name}</h2><p>{user?.email}</p></div><i>Active</i></div>
-          <div className="welcome-details">
-            <div><span><Building2/></span><small>COMPANY</small><strong>{client?.name}</strong></div>
-            <div><span><BriefcaseBusiness/></span><small>ROLE</small><strong>{user?.role}</strong></div>
-            <div><span><MapPin/></span><small>DEFAULT STORE</small><strong>{site?.name}</strong></div>
-            <div><span><Clock3/></span><small>SESSION</small><strong>Live & connected</strong></div>
+          <div className="welcome-card-top">
+            <span className="welcome-avatar">
+              {initials(user?.name || 'User')}
+            </span>
+            <div>
+              <small>SIGNED IN AS</small>
+              <h2>{user?.name}</h2>
+              <p>{user?.email}</p>
+            </div>
+            <i>Active</i>
           </div>
-          <button className="enter-workspace" onClick={onEnter}><span>Enter {site?.name}</span><ChevronRight/></button>
-          <div className="welcome-user-switch"><label>Testing as another user?</label><select value={user?.id||''} onChange={e=>{const selected=users.find(u=>u.id===Number(e.target.value));if(selected)onChooseUser(selected)}}>{users.map(u=><option key={u.id} value={u.id}>{u.name} · {locations.find(l=>l.id===u.default_location_id)?.name}</option>)}</select></div>
+          <div className="welcome-details">
+            <div>
+              <span>
+                <Building2 />
+              </span>
+              <small>COMPANY</small>
+              <strong>{client?.name}</strong>
+            </div>
+            <div>
+              <span>
+                <BriefcaseBusiness />
+              </span>
+              <small>ROLE</small>
+              <strong>{user?.role}</strong>
+            </div>
+            <div>
+              <span>
+                <MapPin />
+              </span>
+              <small>DEFAULT STORE</small>
+              <strong>{site?.name}</strong>
+            </div>
+            <div>
+              <span>
+                <Clock3 />
+              </span>
+              <small>SESSION</small>
+              <strong>Live & connected</strong>
+            </div>
+          </div>
+          <button className="enter-workspace" onClick={onEnter}>
+            <span>Enter {site?.name}</span>
+            <ChevronRight />
+          </button>
+          <div className="welcome-user-switch">
+            <label>Testing as another user?</label>
+            <select
+              value={user?.id || ''}
+              onChange={(e) => {
+                const selected = users.find(
+                  (u) => u.id === Number(e.target.value),
+                );
+                if (selected) onChooseUser(selected);
+              }}
+            >
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} ·{' '}
+                  {locations.find((l) => l.id === u.default_location_id)?.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </article>
       </section>
-      <footer className="welcome-footer"><span>© 2026 DataWiz Consulting</span><span>Secure · Connected · Ready</span></footer>
+      <footer className="welcome-footer">
+        <span>© 2026 DataWiz Consulting</span>
+        <span>Secure · Connected · Ready</span>
+      </footer>
     </main>
   );
 }
