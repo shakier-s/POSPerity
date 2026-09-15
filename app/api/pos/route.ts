@@ -4,6 +4,19 @@ const json = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const bad = (message: string, status = 400) => json({ error: message }, status);
 
+const melroseCellphoneData = [
+  ['MOB-VOD-500D', '6002001000013', 'Vodacom 500MB Daily', 19, 17, 80],
+  ['MOB-VOD-1GB', '6002001000020', 'Vodacom 1GB Monthly', 85, 78, 65],
+  ['MOB-VOD-2GB', '6002001000037', 'Vodacom 2GB Monthly', 149, 137, 44],
+  ['MOB-MTN-1GB', '6002001000044', 'MTN 1GB Monthly', 89, 81, 72],
+  ['MOB-MTN-3GB', '6002001000051', 'MTN 3GB Monthly', 199, 184, 36],
+  ['MOB-CELLC-1GB', '6002001000068', 'Cell C 1GB Monthly', 65, 59, 51],
+  ['MOB-TEL-2GB', '6002001000075', 'Telkom 2GB Monthly', 99, 90, 58],
+  ['MOB-TEL-5GB', '6002001000082', 'Telkom 5GB Monthly', 199, 182, 33],
+  ['MOB-RAIN-5GB', '6002001000099', 'Rain 5GB Any-Use', 250, 230, 28],
+  ['MOB-AFRI-10GB', '6002001000105', 'Afrihost 10GB Mobile', 399, 368, 22],
+] as const;
+
 export async function GET(request: Request) {
   try {
     const db = getDb();
@@ -227,6 +240,19 @@ export async function POST(request: Request) {
       !(isManager ? managerActions : cashierActions).has(action)
     )
       return bad(`${actor.role} users cannot perform this action`, 403);
+    if (action === 'installMelroseCellphoneDemo') {
+      if (!isAdministrator) return bad('Only client administrators can install sample data', 403);
+      const location = await db.prepare<{ id: number }>("SELECT id FROM locations WHERE client_id=? AND lower(name)='melrose store' AND type='store'").bind(actor.client_id).first();
+      if (!location) return bad('Melrose store was not found for this client', 404);
+      await db.prepare('DELETE FROM inventory WHERE client_id=? AND location_id=?').bind(actor.client_id, location.id).run();
+      for (const [sku, barcode, name, price, cost, stock] of melroseCellphoneData) {
+        await db.prepare("INSERT INTO products (client_id,sku,barcode,name,category,price,cost,icon,color) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(client_id,sku) DO UPDATE SET barcode=excluded.barcode,name=excluded.name,category=excluded.category,price=excluded.price,cost=excluded.cost,icon=excluded.icon,color=excluded.color").bind(actor.client_id, sku, barcode, name, 'Cellphone data', price, cost, '📶', '#d9e3ea').run();
+        const product = await db.prepare<{ id: number }>('SELECT id FROM products WHERE client_id=? AND sku=?').bind(actor.client_id, sku).first();
+        if (product) await db.prepare('INSERT INTO inventory (client_id,location_id,product_id,quantity,reorder_level,show_on_pos) VALUES (?,?,?,?,?,1) ON CONFLICT(location_id,product_id) DO UPDATE SET quantity=excluded.quantity,reorder_level=excluded.reorder_level,show_on_pos=1').bind(actor.client_id, location.id, product.id, stock, 15).run();
+      }
+      await audit('Installed', 'Sample catalogue', location.id, `Replaced Melrose Store inventory with ${melroseCellphoneData.length} cellphone data products`);
+      return json({ ok: true, locationId: location.id, products: melroseCellphoneData.length });
+    }
     if (action === 'setPosVisibility') {
       const clientId = actor.client_id,
         locationId = Number(body.locationId),
