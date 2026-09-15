@@ -11,6 +11,7 @@ import {
   CircleUserRound,
   Clock3,
   CreditCard,
+  Copy,
   Eye,
   EyeOff,
   LayoutGrid,
@@ -1184,7 +1185,7 @@ function Module({
             u.role,
             locations.find((l) => l.id === u.default_location_id)?.name || '—',
             u.status,
-            ...(isAdministrator ? [<CrudButtons key={u.id} onEdit={() => onDialog(`edit:user:${u.id}`)} onDelete={() => void onDelete('user', u.id)} />] : []),
+            ...(isAdministrator ? [<CrudButtons key={u.id} onDuplicate={() => onDialog(`duplicate:user:${u.id}`)} onEdit={() => onDialog(`edit:user:${u.id}`)} onDelete={() => void onDelete('user', u.id)} />] : []),
           ])}
         />
       </Page>
@@ -1380,8 +1381,8 @@ function Page({
     </div>
   );
 }
-function CrudButtons({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
-  return <div className="crud-actions"><button aria-label="Edit record" onClick={onEdit}><Pencil /></button><button aria-label="Delete record" onClick={onDelete}><Trash2 /></button></div>;
+function CrudButtons({ onDuplicate, onEdit, onDelete }: { onDuplicate?: () => void; onEdit: () => void; onDelete: () => void }) {
+  return <div className="crud-actions">{onDuplicate && <button aria-label="Duplicate user" title="Duplicate user" onClick={onDuplicate}><Copy /></button>}<button aria-label="Edit record" title="Edit record" onClick={onEdit}><Pencil /></button><button aria-label="Delete record" title="Delete record" onClick={onDelete}><Trash2 /></button></div>;
 }
 function Rows({ headers, rows }: { headers: string[]; rows: React.ReactNode[][] }) {
   return (
@@ -1636,7 +1637,7 @@ function Dialog({
     operation = '',
     recordId = 0;
   const parts = kind.split(':');
-  if (parts[0] === 'edit' || parts[0] === 'create') {
+  if (parts[0] === 'edit' || parts[0] === 'create' || parts[0] === 'duplicate') {
     operation = parts[0] === 'edit' ? 'update' : 'create';
     entity = parts[1];
     recordId = Number(parts[2] || 0);
@@ -1665,17 +1666,18 @@ function Dialog({
   }
   if (kind === 'user' || entity === 'user') {
     const record = data.users.find((item) => item.id === recordId);
-    title = record ? 'Edit user' : 'Invite user';
+    const isDuplicate = parts[0] === 'duplicate';
+    title = isDuplicate ? 'Duplicate user' : record ? 'Edit user' : 'Invite user';
     if (!action) action = 'user';
     fields = (
       <>
         <label>
           Full name
-          <input name="name" defaultValue={record?.name} required />
+          <input name="name" defaultValue={isDuplicate && record ? `${record.name} copy` : record?.name} required />
         </label>
         <label>
           Email
-          <input name="email" type="email" defaultValue={record?.email} required />
+          <input name="email" type="email" defaultValue={isDuplicate ? '' : record?.email} placeholder={isDuplicate ? 'Enter the new user’s email' : undefined} required />
         </label>
         <label>
           Role
