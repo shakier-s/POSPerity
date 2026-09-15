@@ -60,6 +60,8 @@ type Product = {
   color: string;
   stock: number;
   location_id: number;
+  reorder_level: number;
+  committed_stock: number;
   show_on_pos: number;
 };
 type Customer = { id: number; name: string; email: string; phone: string };
@@ -81,6 +83,9 @@ type PO = {
 };
 type Transfer = {
   id: number;
+  from_location_id: number;
+  to_location_id: number;
+  product_id: number;
   origin: string;
   destination: string;
   product_name: string;
@@ -1211,7 +1216,13 @@ function Module({
         />
       </Page>
     );
-  if (module === 'Distribution')
+  if (module === 'Distribution') {
+    const warehouseStock = data.products.filter((p) => p.location_id === warehouse?.id);
+    const committedFor = (productId: number) => Number(warehouseStock.find((p) => p.id === productId)?.committed_stock || 0);
+    const totalOnHand = warehouseStock.reduce((sum, p) => sum + Number(p.stock), 0);
+    const totalCommitted = warehouseStock.reduce((sum, p) => sum + committedFor(p.id), 0);
+    const totalValue = warehouseStock.reduce((sum, p) => sum + Number(p.stock) * Number(p.cost), 0);
+    const lowStock = warehouseStock.filter((p) => Number(p.stock) - committedFor(p.id) <= Number(p.reorder_level)).length;
     return (
       <Page
         title="Warehouse distribution"
@@ -1228,7 +1239,30 @@ function Module({
             <strong>{warehouse?.name}</strong>
             <p>{warehouse?.address}</p>
           </div>
+          <dl>
+            <div><dt>Available units</dt><dd>{totalOnHand - totalCommitted}</dd></div>
+            <div><dt>Committed</dt><dd>{totalCommitted}</dd></div>
+          </dl>
         </div>
+        <div className="warehouse-summary">
+          <article><span>Products stocked</span><strong>{warehouseStock.length}</strong><small>Warehouse catalogue</small></article>
+          <article><span>Units on hand</span><strong>{totalOnHand}</strong><small>Physical warehouse stock</small></article>
+          <article><span>Stock value</span><strong>{money(totalValue)}</strong><small>At current cost</small></article>
+          <article className={lowStock ? 'needs-attention' : ''}><span>Reorder alerts</span><strong>{lowStock}</strong><small>At or below reorder level</small></article>
+        </div>
+        <section className="warehouse-stock-card">
+          <header>
+            <div><h3>Warehouse stock levels</h3><span>Committed stock is reserved for open transfers</span></div>
+            {isAdministrator && <button onClick={() => onDialog(`create:product:0:${warehouse?.id || site.id}`)}><Plus /> Add warehouse stock</button>}
+          </header>
+          <div className="warehouse-stock-table">
+            <div className="warehouse-stock-head"><span>Product</span><span>On hand</span><span>Committed</span><span>Available</span><span>Reorder at</span><span>Status</span><span>Value</span>{isAdministrator && <span>Manage</span>}</div>
+            {warehouseStock.length ? warehouseStock.map((p) => {
+              const committed = committedFor(p.id), available = Number(p.stock) - committed, low = available <= Number(p.reorder_level);
+              return <article key={`warehouse-${p.id}`}><span><strong>{p.name}</strong><small>{p.sku} · {p.category}</small></span><span>{p.stock}</span><span>{committed}</span><span><b>{available}</b></span><span>{p.reorder_level}</span><span><i className={low ? 'stock-alert' : 'stock-healthy'}>{low ? 'Reorder' : 'Healthy'}</i></span><span>{money(Number(p.stock) * Number(p.cost))}</span>{isAdministrator && <span><button aria-label={`Edit ${p.name} warehouse stock`} title="Edit warehouse stock" onClick={() => onDialog(`edit:product:${p.id}:${p.location_id}`)}><Pencil /></button></span>}</article>;
+            }) : <Empty text="No warehouse stock yet" />}
+          </div>
+        </section>
         <section className="transfer-card">
           <header>
             <div>
@@ -1266,6 +1300,7 @@ function Module({
         </section>
       </Page>
     );
+  }
   if (module === 'Inventory') {
     const rows = data.products.filter((p) => p.location_id === site.id);
     return (
@@ -1459,7 +1494,8 @@ function Dialog({
     managerCreatingUser = actor?.role.toLowerCase().includes('manager'),
     warehouseProducts = data.products.filter(
       (p) => p.location_id === warehouse?.id,
-    );
+    ),
+    warehouseAvailableFor = (product: Product) => Math.max(0, Number(product.stock) - Number(product.committed_stock || 0));
   if (kind === 'selectCustomer')
     return (
       <Modal title="Select customer" onClose={onClose}>
@@ -1737,7 +1773,7 @@ function Dialog({
   if (entity === 'product') {
     const locationId = Number(parts[3] || siteId), record = data.products.find((item) => item.id === recordId && item.location_id === locationId);
     title = record ? 'Edit product and stock' : 'Add product';
-    fields = <><label>Product name<input name="name" defaultValue={record?.name} required /></label><label>SKU<input name="sku" defaultValue={record?.sku} required /></label><label>Barcode<input name="barcode" defaultValue={record?.barcode} /></label><label>Category<input name="category" defaultValue={record?.category} required /></label><label>Selling price<input name="price" type="number" min="0" step="0.01" defaultValue={record?.price} required /></label><label>Cost<input name="cost" type="number" min="0" step="0.01" defaultValue={record?.cost} required /></label><label>Location<select name="locationId" defaultValue={locationId}>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label><label>On hand<input name="stock" type="number" min="0" defaultValue={record?.stock || 0} required /></label></>;
+    fields = <><label>Product name<input name="name" defaultValue={record?.name} required /></label><label>SKU<input name="sku" defaultValue={record?.sku} required /></label><label>Barcode<input name="barcode" defaultValue={record?.barcode} /></label><label>Category<input name="category" defaultValue={record?.category} required /></label><label>Selling price<input name="price" type="number" min="0" step="0.01" defaultValue={record?.price} required /></label><label>Cost<input name="cost" type="number" min="0" step="0.01" defaultValue={record?.cost} required /></label><label>Location<select name="locationId" defaultValue={locationId}>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label><label>On hand<input name="stock" type="number" min="0" defaultValue={record?.stock || 0} required /></label><label>Reorder level<input name="reorderLevel" type="number" min="0" defaultValue={record?.reorder_level ?? 5} required /></label></>;
   }
   if (kind === 'transfer') {
     title = 'New stock transfer';
@@ -1764,7 +1800,7 @@ function Dialog({
           <select name="productId">
             {warehouseProducts.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} · {p.stock} available
+                {p.name} · {warehouseAvailableFor(p)} available
               </option>
             ))}
           </select>

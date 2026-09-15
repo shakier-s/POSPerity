@@ -95,10 +95,10 @@ export async function GET(request: Request) {
       db
         .prepare(
           isAdministrator
-            ? 'SELECT p.*,i.quantity AS stock,i.location_id,i.show_on_pos FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? ORDER BY p.name'
+            ? "SELECT p.*,i.quantity AS stock,i.location_id,i.reorder_level,i.show_on_pos,COALESCE((SELECT SUM(t.quantity) FROM stock_transfers t WHERE t.client_id=p.client_id AND t.from_location_id=i.location_id AND t.product_id=p.id AND t.status!='Received'),0) AS committed_stock FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? ORDER BY p.name"
             : isManager
-              ? "SELECT p.*,i.quantity AS stock,i.location_id,i.show_on_pos FROM products p JOIN inventory i ON i.product_id=p.id JOIN locations l ON l.id=i.location_id WHERE p.client_id=? AND (i.location_id=? OR l.type='warehouse') ORDER BY p.name"
-              : 'SELECT p.*,i.quantity AS stock,i.location_id,i.show_on_pos FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? AND i.location_id=? ORDER BY p.name',
+              ? "SELECT p.*,i.quantity AS stock,i.location_id,i.reorder_level,i.show_on_pos,COALESCE((SELECT SUM(t.quantity) FROM stock_transfers t WHERE t.client_id=p.client_id AND t.from_location_id=i.location_id AND t.product_id=p.id AND t.status!='Received'),0) AS committed_stock FROM products p JOIN inventory i ON i.product_id=p.id JOIN locations l ON l.id=i.location_id WHERE p.client_id=? AND (i.location_id=? OR l.type='warehouse') ORDER BY p.name"
+              : "SELECT p.*,i.quantity AS stock,i.location_id,i.reorder_level,i.show_on_pos,COALESCE((SELECT SUM(t.quantity) FROM stock_transfers t WHERE t.client_id=p.client_id AND t.from_location_id=i.location_id AND t.product_id=p.id AND t.status!='Received'),0) AS committed_stock FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? AND i.location_id=? ORDER BY p.name",
         )
         .bind(...(isAdministrator ? [clientId] : [clientId, scopedLocationId]))
         .all(),
@@ -294,9 +294,13 @@ export async function POST(request: Request) {
         const name = String(body.name || '').trim(), sku = String(body.sku || '').trim(),
           barcode = String(body.barcode || '').trim(), category = String(body.category || '').trim(),
           price = Number(body.price), cost = Number(body.cost), locationId = Number(body.locationId),
-          stock = Math.max(0, Number(body.stock || 0));
+          stock = Math.max(0, Number(body.stock || 0)), reorderLevel = Math.max(0, Number(body.reorderLevel ?? 5));
         const location = await db.prepare('SELECT id FROM locations WHERE id=? AND client_id=?').bind(locationId, clientId).first();
         if (!name || !sku || price < 0 || cost < 0 || !location) return bad('Valid product, pricing and location details are required');
+        if (operation === 'update') {
+          const committed = await db.prepare<{ quantity: number }>("SELECT COALESCE(SUM(quantity),0) AS quantity FROM stock_transfers WHERE client_id=? AND from_location_id=? AND product_id=? AND status!='Received'").bind(clientId, locationId, id).first();
+          if (stock < Number(committed?.quantity || 0)) return bad('On-hand stock cannot be lower than stock committed to open transfers');
+        }
         let productId = id;
         if (operation === 'create') {
           const result = await db.prepare('INSERT INTO products (client_id,sku,barcode,name,category,price,cost,icon,color) VALUES (?,?,?,?,?,?,?,?,?)').bind(clientId, sku, barcode || null, name, category, price, cost, 'Package', '#35383c').run();
@@ -304,7 +308,7 @@ export async function POST(request: Request) {
         } else {
           await db.prepare('UPDATE products SET sku=?,barcode=?,name=?,category=?,price=?,cost=? WHERE id=? AND client_id=?').bind(sku, barcode || null, name, category, price, cost, id, clientId).run();
         }
-        await db.prepare('INSERT INTO inventory (client_id,location_id,product_id,quantity,reorder_level) VALUES (?,?,?,?,?) ON CONFLICT(location_id,product_id) DO UPDATE SET quantity=excluded.quantity').bind(clientId, locationId, productId, stock, 5).run();
+        await db.prepare('INSERT INTO inventory (client_id,location_id,product_id,quantity,reorder_level) VALUES (?,?,?,?,?) ON CONFLICT(location_id,product_id) DO UPDATE SET quantity=excluded.quantity,reorder_level=excluded.reorder_level').bind(clientId, locationId, productId, stock, reorderLevel).run();
         await audit(operation === 'create' ? 'Created' : 'Updated', 'Product', productId, `${operation === 'create' ? 'Created' : 'Updated'} ${name}; stock at location #${locationId} set to ${stock}`);
         return json({ ok: true, id: productId }, operation === 'create' ? 201 : 200);
       }
@@ -464,6 +468,14 @@ export async function POST(request: Request) {
         .first();
       if (!source || source.quantity < quantity)
         return bad('Not enough stock at the source location');
+      const committed = await db
+        .prepare<{ quantity: number }>(
+          "SELECT COALESCE(SUM(quantity),0) AS quantity FROM stock_transfers WHERE client_id=? AND from_location_id=? AND product_id=? AND status!='Received'",
+        )
+        .bind(clientId, from, productId)
+        .first();
+      if (source.quantity - Number(committed?.quantity || 0) < quantity)
+        return bad('Not enough available stock after open transfers');
       const result = await db
         .prepare(
           'INSERT INTO stock_transfers (client_id,from_location_id,to_location_id,product_id,quantity,status,created_at) VALUES (?,?,?,?,?,?,?)',
@@ -494,6 +506,14 @@ export async function POST(request: Request) {
           'Store managers may only receive transfers for their assigned store',
           403,
         );
+      const sourceStock = await db
+        .prepare<{ quantity: number }>(
+          'SELECT quantity FROM inventory WHERE location_id=? AND product_id=?',
+        )
+        .bind(transfer.from_location_id, transfer.product_id)
+        .first();
+      if (!sourceStock || sourceStock.quantity < transfer.quantity)
+        return bad('Source stock is no longer sufficient to receive this transfer');
       await db.batch([
         db
           .prepare(
