@@ -95,10 +95,10 @@ export async function GET(request: Request) {
       db
         .prepare(
           isAdministrator
-            ? 'SELECT p.*,i.quantity AS stock,i.location_id FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? ORDER BY p.name'
+            ? 'SELECT p.*,i.quantity AS stock,i.location_id,i.show_on_pos FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? ORDER BY p.name'
             : isManager
-              ? "SELECT p.*,i.quantity AS stock,i.location_id FROM products p JOIN inventory i ON i.product_id=p.id JOIN locations l ON l.id=i.location_id WHERE p.client_id=? AND (i.location_id=? OR l.type='warehouse') ORDER BY p.name"
-              : 'SELECT p.*,i.quantity AS stock,i.location_id FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? AND i.location_id=? ORDER BY p.name',
+              ? "SELECT p.*,i.quantity AS stock,i.location_id,i.show_on_pos FROM products p JOIN inventory i ON i.product_id=p.id JOIN locations l ON l.id=i.location_id WHERE p.client_id=? AND (i.location_id=? OR l.type='warehouse') ORDER BY p.name"
+              : 'SELECT p.*,i.quantity AS stock,i.location_id,i.show_on_pos FROM products p JOIN inventory i ON i.product_id=p.id WHERE p.client_id=? AND i.location_id=? ORDER BY p.name',
         )
         .bind(...(isAdministrator ? [clientId] : [clientId, scopedLocationId]))
         .all(),

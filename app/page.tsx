@@ -214,7 +214,7 @@ export default function Home() {
         }),
         result = await r.json();
       if (!r.ok) throw new Error(result.error || 'Posting failed');
-      await load();
+      await load(clientId, userId);
       setDialog(null);
       return result;
     } catch (e) {
