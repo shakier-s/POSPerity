@@ -244,13 +244,13 @@ export async function POST(request: Request) {
       if (!isAdministrator) return bad('Only client administrators can install sample data', 403);
       const location = await db.prepare<{ id: number }>("SELECT id FROM locations WHERE client_id=? AND lower(name)='melrose store' AND type='store'").bind(actor.client_id).first();
       if (!location) return bad('Melrose store was not found for this client', 404);
-      await db.prepare('DELETE FROM inventory WHERE client_id=? AND location_id=?').bind(actor.client_id, location.id).run();
+      await db.prepare('UPDATE inventory SET show_on_pos=0 WHERE client_id=? AND location_id=?').bind(actor.client_id, location.id).run();
       for (const [sku, barcode, name, price, cost, stock] of melroseCellphoneData) {
         await db.prepare("INSERT INTO products (client_id,sku,barcode,name,category,price,cost,icon,color) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(client_id,sku) DO UPDATE SET barcode=excluded.barcode,name=excluded.name,category=excluded.category,price=excluded.price,cost=excluded.cost,icon=excluded.icon,color=excluded.color").bind(actor.client_id, sku, barcode, name, 'Cellphone data', price, cost, '📶', '#d9e3ea').run();
         const product = await db.prepare<{ id: number }>('SELECT id FROM products WHERE client_id=? AND sku=?').bind(actor.client_id, sku).first();
         if (product) await db.prepare('INSERT INTO inventory (client_id,location_id,product_id,quantity,reorder_level,show_on_pos) VALUES (?,?,?,?,?,1) ON CONFLICT(location_id,product_id) DO UPDATE SET quantity=excluded.quantity,reorder_level=excluded.reorder_level,show_on_pos=1').bind(actor.client_id, location.id, product.id, stock, 15).run();
       }
-      await audit('Installed', 'Sample catalogue', location.id, `Replaced Melrose Store inventory with ${melroseCellphoneData.length} cellphone data products`);
+      await audit('Installed', 'Sample catalogue', location.id, `Displayed ${melroseCellphoneData.length} cellphone data products at Melrose Store; retained prior inventory as hidden items`);
       return json({ ok: true, locationId: location.id, products: melroseCellphoneData.length });
     }
     if (action === 'setPosVisibility') {
