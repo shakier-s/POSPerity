@@ -1,0 +1,1 @@
+ALTER TABLE `inventory` ADD `show_on_pos` integer DEFAULT true NOT NULL;

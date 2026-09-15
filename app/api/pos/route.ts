@@ -220,12 +220,26 @@ export async function POST(request: Request) {
       'transfer',
       'receiveTransfer',
       'user',
+      'setPosVisibility',
     ]);
     if (
       !isAdministrator &&
       !(isManager ? managerActions : cashierActions).has(action)
     )
       return bad(`${actor.role} users cannot perform this action`, 403);
+    if (action === 'setPosVisibility') {
+      const clientId = actor.client_id,
+        locationId = Number(body.locationId),
+        productId = Number(body.productId),
+        visible = body.visible === true || body.visible === 1 || body.visible === '1';
+      if (!locationId || !productId) return bad('Store and product are required');
+      if (isManager && locationId !== actor.default_location_id)
+        return bad('Store managers may only configure their assigned store', 403);
+      const result = await db.prepare('UPDATE inventory SET show_on_pos=? WHERE client_id=? AND location_id=? AND product_id=?').bind(visible ? 1 : 0, clientId, locationId, productId).run();
+      if (!result.meta.changes) return bad('Product inventory record not found', 404);
+      await audit('Updated', 'POS product visibility', productId, `${visible ? 'Displayed' : 'Hidden'} product #${productId} on the sales screen at location #${locationId}`);
+      return json({ ok: true });
+    }
     if (action === 'adminCrud') {
       if (!isAdministrator)
         return bad('Only client administrators can manage these records', 403);

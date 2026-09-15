@@ -146,8 +146,9 @@ Products belong to the client catalogue. They are not duplicated manually for ea
 - `product_id`
 - `quantity`
 - `reorder_level`
+- `show_on_pos`, a store-specific flag controlling whether the product appears as a sales-screen tile
 
-The `(location_id, product_id)` combination is unique. Sales deduct from the selling store. Warehouse receipts and transfers update location inventory.
+The `(location_id, product_id)` combination is unique. Sales deduct from the selling store. Warehouse receipts and transfers update location inventory. Administrators and store managers may change `show_on_pos` for stores they control.
 
 #### `customers`
 
@@ -251,16 +252,17 @@ Application log-off is distinct from signing out of the private hosting/ChatGPT 
 
 1. Resolve the acting user and default/selected store.
 2. Load the client catalogue joined to inventory for that store.
-3. Add products through cards, text search, SKU search, or barcode scan.
-4. Optionally attach a client customer.
-5. Select Card or Cash.
-6. For cash, require `cash_received >= total` and calculate change.
-7. On the server, re-read authoritative prices and inventory.
-8. Reject missing products, invalid quantities, insufficient inventory, invalid client/store access, or insufficient cash.
-9. Create the sale and sale items.
-10. Deduct quantities from the selling store only.
-11. Return the receipt number and change.
-12. Refresh inventory and reports.
+3. Show product cards only for products selected for the active store's sales screen. Administrators and store managers configure this selection from Inventory.
+4. Find every other store product through text, SKU, or barcode search; search results are not limited by the sales-screen selection.
+5. Optionally attach a client customer.
+6. Select Card or Cash.
+7. For cash, require `cash_received >= total` and calculate change.
+8. On the server, re-read authoritative prices and inventory.
+9. Reject missing products, invalid quantities, insufficient inventory, invalid client/store access, or insufficient cash.
+10. Create the sale and sale items.
+11. Deduct quantities from the selling store only.
+12. Return the receipt number and change.
+13. Refresh inventory and reports.
 
 VAT is included at 15%:
 
@@ -339,6 +341,7 @@ Send JSON to `POST /api/pos` with an `action` field:
 - `purchaseOrder`
 - `transfer`
 - `receiveTransfer`
+- `setPosVisibility` for administrators and store managers at permitted stores
 - `adminCrud` with an allowed tenant entity and `create`, `update`, or `delete` operation
 
 Every write includes the acting `userId` and relevant `clientId`. The server loads the user, checks active status, validates tenant membership and role, then validates the requested store and records.

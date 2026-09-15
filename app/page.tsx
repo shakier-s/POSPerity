@@ -11,6 +11,8 @@ import {
   CircleUserRound,
   Clock3,
   CreditCard,
+  Eye,
+  EyeOff,
   LayoutGrid,
   LogIn,
   LogOut,
@@ -57,6 +59,7 @@ type Product = {
   color: string;
   stock: number;
   location_id: number;
+  show_on_pos: number;
 };
 type Customer = { id: number; name: string; email: string; phone: string };
 type User = {
@@ -241,13 +244,11 @@ export default function Home() {
       (p) => p.location_id === siteId,
     ),
     categories = ['All items', ...new Set(siteProducts.map((p) => p.category))],
-    filtered = siteProducts.filter(
-      (p) =>
-        (category === 'All items' || p.category === category) &&
-        `${p.name} ${p.sku} ${p.barcode || ''}`
-          .toLowerCase()
-          .includes(query.trim().toLowerCase()),
-    ),
+    normalizedQuery = query.trim().toLowerCase(),
+    filtered = siteProducts.filter((p) => {
+      const matchesQuery = `${p.name} ${p.sku} ${p.barcode || ''}`.toLowerCase().includes(normalizedQuery);
+      return (category === 'All items' || p.category === category) && matchesQuery && (normalizedQuery.length > 0 || Boolean(p.show_on_pos));
+    }),
     subtotal = cart.reduce((s, l) => s + l.price * l.quantity, 0),
     tax = subtotal - subtotal / 1.15;
   const add = (p: Product) =>
@@ -582,9 +583,9 @@ export default function Home() {
               </div>
               <div className="catalog-heading">
                 <div>
-                  <h2>{category}</h2>
+                  <h2>{normalizedQuery ? 'Search results' : category}</h2>
                   <p>
-                    {filtered.length} live products at {site?.name}
+                    {filtered.length} {normalizedQuery ? 'matching' : 'featured'} products at {site?.name}
                   </p>
                 </div>
                 <button>
@@ -620,6 +621,7 @@ export default function Home() {
                     </span>
                   </button>
                 ))}
+                {!filtered.length && <div className="catalog-empty"><Search /><strong>{normalizedQuery ? 'No matching products' : 'No featured products selected'}</strong><span>{normalizedQuery ? 'Try a product name, SKU or barcode.' : 'An administrator or store manager can select products from Inventory.'}</span></div>}
               </div>
             </section>
             <aside className="cart-panel">
@@ -737,12 +739,17 @@ export default function Home() {
             site={site!}
             warehouse={warehouse}
             isAdministrator={isAdministrator}
+            isManager={isManager}
             onDialog={setDialog}
             onNavigate={setActiveNav}
             onDelete={async (entity, id) => {
               if (!window.confirm('Delete this record? This cannot be undone.')) return;
               await post({ action: 'adminCrud', operation: 'delete', entity, id, clientId, userId });
               setNotice('Record deleted');
+            }}
+            onSetVisibility={async (product, visible) => {
+              await post({ action: 'setPosVisibility', productId: product.id, locationId: product.location_id, visible, clientId, userId });
+              setNotice(`${product.name} ${visible ? 'added to' : 'removed from'} the sales screen`);
             }}
             onReceive={async (id) => {
               await post({ action: 'receiveTransfer', id, clientId, userId });
@@ -1074,9 +1081,11 @@ function Module({
   site,
   warehouse,
   isAdministrator,
+  isManager,
   onDialog,
   onNavigate,
   onDelete,
+  onSetVisibility,
   onReceive,
 }: {
   module: string;
@@ -1086,9 +1095,11 @@ function Module({
   site: Location;
   warehouse?: Location;
   isAdministrator: boolean;
+  isManager: boolean;
   onDialog: (v: string) => void;
   onNavigate: (v: string) => void;
   onDelete: (entity: string, id: number) => Promise<void>;
+  onSetVisibility: (product: Product, visible: boolean) => Promise<void>;
   onReceive: (id: number) => void;
 }) {
   const actions: Record<string, [string, string]> = {
@@ -1259,13 +1270,14 @@ function Module({
     return (
       <Page title="Inventory" subtitle={`Live stock at ${site.name}`} action={isAdministrator ? actions[module] : undefined} onDialog={onDialog}>
         <Rows
-          headers={['Product', 'SKU', 'Category', 'On hand', 'Value', ...(isAdministrator ? ['Manage'] : [])]}
+          headers={['Product', 'SKU', 'Category', 'On hand', 'Value', ...((isAdministrator || isManager) ? ['Sales screen'] : []), ...(isAdministrator ? ['Manage'] : [])]}
           rows={rows.map((p) => [
             p.name,
             p.sku,
             p.category,
             String(p.stock),
             money(p.stock * p.cost),
+            ...((isAdministrator || isManager) ? [<button key={`visibility-${p.id}`} className={`visibility-toggle ${p.show_on_pos ? 'is-visible' : ''}`} onClick={() => void onSetVisibility(p, !p.show_on_pos)}>{p.show_on_pos ? <Eye /> : <EyeOff />} {p.show_on_pos ? 'Displayed' : 'Hidden'}</button>] : []),
             ...(isAdministrator ? [<CrudButtons key={`${p.id}-${p.location_id}`} onEdit={() => onDialog(`edit:product:${p.id}:${p.location_id}`)} onDelete={() => void onDelete('product', p.id)} />] : []),
           ])}
         />

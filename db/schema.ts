@@ -59,6 +59,7 @@ export const inventory = sqliteTable(
       .references(() => products.id),
     quantity: integer('quantity').notNull().default(0),
     reorderLevel: integer('reorder_level').notNull().default(5),
+    showOnPos: integer('show_on_pos', { mode: 'boolean' }).notNull().default(true),
   },
   (table) => [
     uniqueIndex('idx_inventory_location_product').on(
